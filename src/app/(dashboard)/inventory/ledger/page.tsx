@@ -1,16 +1,35 @@
-import type { Metadata } from "next";
-import { getUserContext } from "@/actions/context";
-import { redirect } from "next/navigation";
-import { getStockBalance } from "@/actions/stock-ledger";
-import StockLedgerClient from "./StockLedgerClient";
+import { Suspense } from 'react';
+import { getStockLedger, getProductsForLookup, getLocationsForLookup } from '@/actions/inventory';
+import StockLedgerClient from './StockLedgerClient';
 
-export const metadata: Metadata = { title: "Stock Ledger — Inventory" };
+export const metadata = { title: 'Stock Ledger | FertiLedger ERP' };
+export const dynamic = 'force-dynamic';
 
 export default async function StockLedgerPage() {
-  let ctx;
-  try { ctx = await getUserContext(); }
-  catch { redirect("/login"); }
+  const [rows, products, locations] = await Promise.all([
+    getStockLedger({ limit: 200 }),
+    getProductsForLookup(),
+    getLocationsForLookup(),
+  ]);
 
-  const balance = await getStockBalance();
-  return <StockLedgerClient initialBalance={balance as unknown as Parameters<typeof StockLedgerClient>[0]["initialBalance"]} />;
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Stock Ledger</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Complete movement history — GRN receipts, sales issues, credit note returns, adjustments
+          </p>
+        </div>
+      </div>
+
+      <Suspense fallback={<div className="text-slate-400 text-sm">Loading ledger…</div>}>
+        <StockLedgerClient
+          initialRows={rows}
+          products={products}
+          locations={locations}
+        />
+      </Suspense>
+    </div>
+  );
 }
