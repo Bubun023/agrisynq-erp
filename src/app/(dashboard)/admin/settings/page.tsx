@@ -1,28 +1,25 @@
-import type { Metadata } from "next";
-import { Settings } from "lucide-react";
+import { Suspense } from 'react';
+import { getOrgSettings } from '@/actions/admin';
+import OrgSettingsClient from './OrgSettingsClient';
 
-export const metadata: Metadata = {
-  title: "Settings — FertiLedger ERP",
-};
+export const metadata = { title: 'Organisation Settings | FertiLedger ERP' };
+export const dynamic = 'force-dynamic';
 
-export default function SettingsPage() {
+export default async function OrgSettingsPage() {
+  const settings = await getOrgSettings();
+
   return (
-    <div className="max-w-7xl mx-auto">
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Settings</h1>
-          <p className="page-subtitle">Organisation, branch, and system configuration</p>
-        </div>
+    <div className="p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Organisation Settings</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Manage your organisation profile, GST details, licence numbers and invoice configuration
+        </p>
       </div>
-      <div className="card p-8 flex flex-col items-center justify-center text-center min-h-[320px] gap-4">
-        <div className="p-4 rounded-2xl bg-surface-subtle">
-          <Settings className="w-8 h-8 text-ink-faint" strokeWidth={1.5} />
-        </div>
-        <div>
-          <p className="text-sm font-medium text-ink">Coming in Phase 10</p>
-          <p className="text-sm text-ink-muted mt-1 max-w-sm">Configure organisation details, branch settings, invoice series, financial year, GST registration details, and FMS settings.</p>
-        </div>
-      </div>
+
+      <Suspense fallback={<div className="text-slate-400 text-sm">Loading settings...</div>}>
+        <OrgSettingsClient initialSettings={settings} />
+      </Suspense>
     </div>
   );
 }
