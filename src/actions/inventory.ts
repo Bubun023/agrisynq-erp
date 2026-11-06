@@ -182,9 +182,9 @@ export async function getStockAdjustments(filters?: {
     .from('stock_adjustments')
     .select(`
       *,
-      products(product_name, product_code),
-      inventory_batches(batch_no),
-      locations(location_name)
+      products(product_name:name, product_code),
+      inventory_batches:batch_register(batch_no:batch_number),
+      locations(location_name:name)
     `)
     .eq('organisation_id', ctx.organisationId)
     .order('adjustment_date', { ascending: false })
@@ -201,12 +201,15 @@ export async function getStockAdjustments(filters?: {
 }
 
 // ─── Stock Adjustments — Create ───────────────────────────────
+// Atomic: post_stock_adjustment() checks the balance, writes the stock_ledger movement
+// (ADJ_INCREASE / ADJ_DECREASE / EXPIRY_ / DAMAGE_WRITE_OFF) and the adjustment document
+// in one transaction, so an adjustment can never exist without moving stock (migration 032).
 
 export async function createStockAdjustment(payload: {
   adjustment_date: string;
   product_id: string;
   batch_id?: string;
-  location_id?: string;
+  location_id: string;
   reason: string;
   qty_adjustment: number;
   notes?: string;
@@ -214,38 +217,19 @@ export async function createStockAdjustment(payload: {
   const supabase = createClient();
   const ctx = await getUserContext();
 
-  // Fetch current stock for this product (+ batch if provided)
-  const summaryFilters: { productId: string; locationId?: string } = {
-    productId: payload.product_id,
-  };
-  if (payload.location_id) summaryFilters.locationId = payload.location_id;
+  if (!payload.location_id) return { error: 'Select the location whose stock is being adjusted.' };
 
-  const summary = await getStockSummary(summaryFilters);
-  const currentQty = summary.reduce((sum, r) => sum + Number(r.qty_on_hand), 0);
-  const qtyAfter   = currentQty + payload.qty_adjustment;
-
-  if (qtyAfter < 0) {
-    return { error: `Adjustment would result in negative stock (${qtyAfter.toFixed(3)}). Current stock: ${currentQty.toFixed(3)}.` };
-  }
-
-  const { data, error } = await supabase
-    .from('stock_adjustments')
-    .insert({
-      organisation_id: ctx.organisationId,
-      branch_id:       ctx.branchId ?? null,
-      adjustment_date: payload.adjustment_date,
-      product_id:      payload.product_id,
-      batch_id:        payload.batch_id ?? null,
-      location_id:     payload.location_id ?? null,
-      reason:          payload.reason,
-      qty_before:      currentQty,
-      qty_adjustment:  payload.qty_adjustment,
-      qty_after:       qtyAfter,
-      notes:           payload.notes ?? null,
-      created_by:      ctx.userId,
-    })
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc('post_stock_adjustment', {
+    p_organisation_id: ctx.organisationId,
+    p_branch_id:       ctx.branchId ?? null,
+    p_date:            payload.adjustment_date,
+    p_product_id:      payload.product_id,
+    p_batch_id:        payload.batch_id || null,
+    p_location_id:     payload.location_id,
+    p_reason:          payload.reason,
+    p_qty_adjustment:  payload.qty_adjustment,
+    p_notes:           payload.notes ?? null,
+  });
 
   if (error) return { error: error.message };
 
@@ -253,46 +237,14 @@ export async function createStockAdjustment(payload: {
     ctx,
     action:    'CREATE',
     tableName: 'stock_adjustments',
-    recordId:  data.id,
-    newValues: data,
+    recordId:  (data as { id: string }).id,
+    newValues: data as Record<string, unknown>,
   });
 
   revalidatePath('/inventory/adjustments');
   revalidatePath('/inventory/ledger');
-  return { data };
-}
-
-// ─── Transfers List ───────────────────────────────────────────
-
-export async function getStockTransfers(filters?: {
-  fromDate?: string;
-  toDate?: string;
-  status?: string;
-  productId?: string;
-}) {
-  const supabase = createClient();
-  const ctx = await getUserContext();
-
-  let query = supabase
-    .from('stock_transfers')
-    .select(`
-      *,
-      products(product_name, product_code),
-      from_location:locations!stock_transfers_from_location_id_fkey(location_name),
-      to_location:locations!stock_transfers_to_location_id_fkey(location_name),
-      inventory_batches(batch_no)
-    `)
-    .eq('organisation_id', ctx.organisationId)
-    .order('transfer_date', { ascending: false });
-
-  if (filters?.status)    query = query.eq('status', filters.status);
-  if (filters?.productId) query = query.eq('product_id', filters.productId);
-  if (filters?.fromDate)  query = query.gte('transfer_date', filters.fromDate);
-  if (filters?.toDate)    query = query.lte('transfer_date', filters.toDate);
-
-  const { data, error } = await query.limit(200);
-  if (error) throw new Error(`Transfers error: ${error.message}`);
-  return data;
+  revalidatePath('/inventory/batches');
+  return { data: data as StockAdjustment };
 }
 
 // ─── Lookup helpers ───────────────────────────────────────────
@@ -302,10 +254,10 @@ export async function getProductsForLookup() {
   const ctx = await getUserContext();
   const { data, error } = await supabase
     .from('products')
-    .select('id, product_name, product_code')
+    .select('id, product_name:name, product_code')
     .eq('organisation_id', ctx.organisationId)
     .eq('is_active', true)
-    .order('product_name');
+    .order('name');
   if (error) throw new Error(error.message);
   return data ?? [];
 }
@@ -315,9 +267,10 @@ export async function getLocationsForLookup() {
   const ctx = await getUserContext();
   const { data, error } = await supabase
     .from('locations')
-    .select('id, location_name, location_type')
+    .select('id, location_name:name, location_type')
     .eq('organisation_id', ctx.organisationId)
-    .order('location_name');
+    .eq('is_active', true)
+    .order('name');
   if (error) throw new Error(error.message);
   return data ?? [];
 }
@@ -326,11 +279,11 @@ export async function getBatchesForProduct(productId: string) {
   const supabase = createClient();
   const ctx = await getUserContext();
   const { data, error } = await supabase
-    .from('inventory_batches')
-    .select('id, batch_no, expiry_date')
+    .from('batch_register')
+    .select('id, batch_no:batch_number, expiry_date, current_qty')
     .eq('organisation_id', ctx.organisationId)
     .eq('product_id', productId)
-    .order('batch_no');
+    .order('expiry_date', { ascending: true, nullsFirst: false });
   if (error) throw new Error(error.message);
   return data ?? [];
 }

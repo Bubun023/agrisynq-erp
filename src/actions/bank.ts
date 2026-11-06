@@ -80,6 +80,7 @@ export async function createBankAccount(payload: {
   const { data, error } = await supabase
     .from('bank_accounts')
     .insert({
+      tenant_id:       ctx.tenantId,
       organisation_id: ctx.organisationId,
       branch_id:       ctx.branchId ?? null,
       account_name:    payload.account_name,
@@ -168,9 +169,18 @@ export async function importBankStatementLines(payload: {
 
   if (!payload.lines.length) return { error: 'No lines to import.' };
 
+  const { data: acct } = await supabase
+    .from('bank_accounts')
+    .select('id')
+    .eq('id', payload.bank_account_id)
+    .eq('organisation_id', ctx.organisationId)
+    .maybeSingle();
+  if (!acct) return { error: 'Bank account not found.' };
+
   const batchId = crypto.randomUUID();
 
   const rows = payload.lines.map(l => ({
+    tenant_id:       ctx.tenantId,
     organisation_id: ctx.organisationId,
     bank_account_id: payload.bank_account_id,
     import_batch_id: batchId,

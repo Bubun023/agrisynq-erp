@@ -27,6 +27,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 -- ─── Bank Accounts ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS bank_accounts (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        uuid NOT NULL REFERENCES tenants(id),
   organisation_id  uuid NOT NULL REFERENCES organisations(id),
   branch_id        uuid REFERENCES branches(id),
   account_name     text NOT NULL,
@@ -46,19 +47,22 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
   UNIQUE (organisation_id, account_no)
 );
 
+DROP TRIGGER IF EXISTS trg_bank_accounts_updated_at ON bank_accounts;
 CREATE TRIGGER trg_bank_accounts_updated_at
   BEFORE UPDATE ON bank_accounts
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 ALTER TABLE bank_accounts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "org_isolation_bank_accounts" ON bank_accounts
-  USING (organisation_id = (SELECT organisation_id FROM user_profiles WHERE id = auth.uid()));
+  FOR ALL USING (tenant_id = public.get_tenant_id())
+  WITH CHECK (tenant_id = public.get_tenant_id());
 
 CREATE INDEX IF NOT EXISTS idx_bank_accounts_org ON bank_accounts(organisation_id);
 
 -- ─── Bank Statement Lines ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS bank_statement_lines (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        uuid NOT NULL REFERENCES tenants(id),
   organisation_id  uuid NOT NULL REFERENCES organisations(id),
   bank_account_id  uuid NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
   import_batch_id  uuid,                     -- groups lines from same upload
@@ -80,13 +84,15 @@ CREATE TABLE IF NOT EXISTS bank_statement_lines (
   updated_at       timestamptz NOT NULL DEFAULT now()
 );
 
+DROP TRIGGER IF EXISTS trg_bank_stmt_updated_at ON bank_statement_lines;
 CREATE TRIGGER trg_bank_stmt_updated_at
   BEFORE UPDATE ON bank_statement_lines
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 ALTER TABLE bank_statement_lines ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "org_isolation_bank_stmt" ON bank_statement_lines
-  USING (organisation_id = (SELECT organisation_id FROM user_profiles WHERE id = auth.uid()));
+  FOR ALL USING (tenant_id = public.get_tenant_id())
+  WITH CHECK (tenant_id = public.get_tenant_id());
 
 CREATE INDEX IF NOT EXISTS idx_bank_stmt_org     ON bank_statement_lines(organisation_id);
 CREATE INDEX IF NOT EXISTS idx_bank_stmt_account ON bank_statement_lines(bank_account_id);
@@ -94,9 +100,10 @@ CREATE INDEX IF NOT EXISTS idx_bank_stmt_date    ON bank_statement_lines(value_d
 CREATE INDEX IF NOT EXISTS idx_bank_stmt_status  ON bank_statement_lines(recon_status);
 
 -- ─── View: vw_bank_account_balance ───────────────────────────
-CREATE OR REPLACE VIEW vw_bank_account_balance AS
+CREATE OR REPLACE VIEW vw_bank_account_balance WITH (security_invoker = true) AS
 SELECT
   ba.id               AS bank_account_id,
+  ba.tenant_id,
   ba.organisation_id,
   ba.account_name,
   ba.account_no,
@@ -116,13 +123,13 @@ SELECT
 FROM bank_accounts ba
 LEFT JOIN bank_statement_lines sl ON sl.bank_account_id = ba.id
 GROUP BY
-  ba.id, ba.organisation_id, ba.account_name, ba.account_no,
+  ba.id, ba.tenant_id, ba.organisation_id, ba.account_name, ba.account_no,
   ba.bank_name, ba.branch_name, ba.ifsc_code, ba.account_type,
   ba.currency, ba.opening_balance, ba.opening_date, ba.is_active;
 
 -- ─── View: vw_bank_reconciliation ────────────────────────────
 -- Unmatched statement lines ready for matching
-CREATE OR REPLACE VIEW vw_bank_reconciliation AS
+CREATE OR REPLACE VIEW vw_bank_reconciliation WITH (security_invoker = true) AS
 SELECT
   sl.*,
   ba.account_name,

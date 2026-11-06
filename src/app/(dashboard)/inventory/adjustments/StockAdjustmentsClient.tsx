@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { createStockAdjustment } from '@/actions/inventory';
+import { createStockAdjustment, getBatchesForProduct, getStockAdjustments } from '@/actions/inventory';
 import type { StockAdjustment } from '@/actions/inventory';
 
 type Props = {
@@ -16,8 +16,6 @@ const REASONS = [
   { value: 'EXPIRY',       label: 'Expiry Write-Off' },
   { value: 'THEFT',        label: 'Theft / Pilferage' },
   { value: 'SAMPLE',       label: 'Sample / Demo' },
-  { value: 'TRANSFER_IN',  label: 'Transfer In' },
-  { value: 'TRANSFER_OUT', label: 'Transfer Out' },
   { value: 'OTHER',        label: 'Other' },
 ];
 
@@ -27,8 +25,6 @@ const REASON_COLORS: Record<string, string> = {
   EXPIRY:       'bg-orange-100 text-orange-700',
   THEFT:        'bg-red-200 text-red-900',
   SAMPLE:       'bg-purple-100 text-purple-700',
-  TRANSFER_IN:  'bg-emerald-100 text-emerald-700',
-  TRANSFER_OUT: 'bg-amber-100 text-amber-800',
   OTHER:        'bg-slate-100 text-slate-700',
 };
 
@@ -40,19 +36,26 @@ export default function StockAdjustmentsClient({ initialRows, products, location
   const [isPending, startTransition] = useTransition();
   const [error, setError]     = useState('');
   const [success, setSuccess] = useState('');
+  const [batches, setBatches] = useState<{ id: string; batch_no: string; expiry_date: string | null; current_qty: number }[]>([]);
 
   // Form state
   const [form, setForm] = useState({
     adjustment_date: today,
     product_id:      '',
     location_id:     '',
+    batch_id:        '',
     reason:          'RECOUNT',
     qty_adjustment:  '',
     notes:           '',
   });
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
-    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    const { name, value } = e.target;
+    setForm(prev => ({ ...prev, [name]: value, ...(name === 'product_id' ? { batch_id: '' } : {}) }));
+    if (name === 'product_id') {
+      setBatches([]);
+      if (value) getBatchesForProduct(value).then(b => setBatches(b as typeof batches)).catch(() => setBatches([]));
+    }
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -61,13 +64,15 @@ export default function StockAdjustmentsClient({ initialRows, products, location
 
     const qty = parseFloat(form.qty_adjustment);
     if (!form.product_id) { setError('Select a product.'); return; }
+    if (!form.location_id) { setError('Select a location.'); return; }
     if (isNaN(qty) || qty === 0) { setError('Qty adjustment cannot be zero.'); return; }
 
     startTransition(async () => {
       const result = await createStockAdjustment({
         adjustment_date: form.adjustment_date,
         product_id:      form.product_id,
-        location_id:     form.location_id || undefined,
+        location_id:     form.location_id,
+        batch_id:        form.batch_id || undefined,
         reason:          form.reason,
         qty_adjustment:  qty,
         notes:           form.notes || undefined,
@@ -78,12 +83,10 @@ export default function StockAdjustmentsClient({ initialRows, products, location
       } else {
         setSuccess(`Adjustment ${result.data?.adjustment_no} created successfully.`);
         setShowForm(false);
-        setForm({ adjustment_date: today, product_id: '', location_id: '', reason: 'RECOUNT', qty_adjustment: '', notes: '' });
+        setForm({ adjustment_date: today, product_id: '', location_id: '', batch_id: '', reason: 'RECOUNT', qty_adjustment: '', notes: '' });
+        setBatches([]);
         // Refresh list by prepending new row
-        if (result.data) {
-          const newRow = result.data as unknown as StockAdjustment;
-          setRows(prev => [newRow, ...prev]);
-        }
+        getStockAdjustments().then(setRows).catch(() => {});
       }
     });
   }
@@ -137,14 +140,27 @@ export default function StockAdjustmentsClient({ initialRows, products, location
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Location</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Location *</label>
                 <select
-                  name="location_id" value={form.location_id} onChange={handleChange}
+                  name="location_id" value={form.location_id} onChange={handleChange} required
                   className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
                 >
-                  <option value="">— All Locations —</option>
+                  <option value="">— Select Location —</option>
                   {locations.map(l => (
                     <option key={l.id} value={l.id}>{l.location_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Batch {batches.length > 0 ? '*' : ''}</label>
+                <select
+                  name="batch_id" value={form.batch_id} onChange={handleChange} required={batches.length > 0}
+                  disabled={!form.product_id || batches.length === 0}
+                  className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-slate-50"
+                >
+                  <option value="">{batches.length === 0 ? '— No batches —' : '— Select Batch —'}</option>
+                  {batches.map(b => (
+                    <option key={b.id} value={b.id}>{b.batch_no}{b.expiry_date ? ` (exp ${b.expiry_date})` : ''} · {Number(b.current_qty)} on hand</option>
                   ))}
                 </select>
               </div>
