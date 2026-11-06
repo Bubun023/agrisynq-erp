@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getUserContext, writeAuditLog } from "./context";
+import { computeLine, sumLines, resolveInvoiceType, round2 } from "@/lib/gst";
 
 // ─── Zod Schemas ──────────────────────────────────────────────
 const InvoiceLineSchema = z.object({
@@ -46,17 +47,6 @@ export type PIFormState = {
   invoiceId?: string;
   invoiceNumber?: string;
 };
-
-// ─── Core: Compute GST split (CGST+SGST or IGST) ─────────────
-function computeGst(taxableAmt: number, gstRate: number, isInterstate: boolean) {
-  const totalGst = (taxableAmt * gstRate) / 100;
-  if (isInterstate) {
-    return { cgstAmount: 0, cgstRate: 0, sgstAmount: 0, sgstRate: 0, igstAmount: totalGst, igstRate: gstRate };
-  }
-  const half = gstRate / 2;
-  const halfAmt = totalGst / 2;
-  return { cgstAmount: halfAmt, cgstRate: half, sgstAmount: halfAmt, sgstRate: half, igstAmount: 0, igstRate: 0 };
-}
 
 // ─── Create Purchase Invoice (DRAFT) ─────────────────────────
 export async function createPurchaseInvoice(
@@ -107,30 +97,19 @@ export async function createPurchaseInvoice(
     const h = parsedHeader.data;
     const isInterstate = h.is_interstate;
 
-    // Server-side financial calculations
-    let grossAmount = 0;
-    let totalDiscount = 0;
-    let taxableTotal = 0;
-    let cgstTotal = 0;
-    let sgstTotal = 0;
-    let igstTotal = 0;
+    // Server-side financial calculations (see lib/gst.ts for rounding rules)
+    const calcs = lines.map((line) => computeLine({
+      qty: line.received_qty, unitPrice: line.unit_price, discountPercent: line.discount_percent,
+      gstRate: line.gst_rate, isInterstate,
+    }));
+    const tot = sumLines(calcs);
+    const grossAmount = tot.gross, totalDiscount = tot.discount, taxableTotal = tot.taxable;
+    const cgstTotal = tot.cgst, sgstTotal = tot.sgst, igstTotal = tot.igst;
 
     const computedLines = lines.map((line, i) => {
-      const gross = line.received_qty * line.unit_price;
-      const discountAmt = gross * (line.discount_percent / 100);
-      const taxable = gross - discountAmt;
-      const gst = computeGst(taxable, line.gst_rate, isInterstate);
-      const lineTotal = taxable + gst.cgstAmount + gst.sgstAmount + gst.igstAmount;
-
-      grossAmount   += gross;
-      totalDiscount += discountAmt;
-      taxableTotal  += taxable;
-      cgstTotal     += gst.cgstAmount;
-      sgstTotal     += gst.sgstAmount;
-      igstTotal     += gst.igstAmount;
-
-      // Landing cost = (taxable + other charges pro-rated) / qty
-      const landingCost = taxable / line.received_qty;
+      const c = calcs[i];
+      // Landing cost = taxable / qty
+      const landingCost = c.taxable / line.received_qty;
 
       return {
         tenant_id:            ctx.tenantId,
@@ -147,22 +126,22 @@ export async function createPurchaseInvoice(
         unit_of_measure:      line.unit_of_measure,
         unit_price:           line.unit_price,
         discount_percent:     line.discount_percent,
-        discount_amount:      Math.round(discountAmt * 100) / 100,
-        taxable_amount:       Math.round(taxable * 100) / 100,
+        discount_amount:      c.discount,
+        taxable_amount:       c.taxable,
         gst_rate:             line.gst_rate,
-        cgst_rate:            gst.cgstRate,
-        sgst_rate:            gst.sgstRate,
-        igst_rate:            gst.igstRate,
-        cgst_amount:          Math.round(gst.cgstAmount * 100) / 100,
-        sgst_amount:          Math.round(gst.sgstAmount * 100) / 100,
-        igst_amount:          Math.round(gst.igstAmount * 100) / 100,
+        cgst_rate:            c.cgstRate,
+        sgst_rate:            c.sgstRate,
+        igst_rate:            c.igstRate,
+        cgst_amount:          c.cgst,
+        sgst_amount:          c.sgst,
+        igst_amount:          c.igst,
         cess_amount:          0,
-        line_total:           Math.round(lineTotal * 100) / 100,
+        line_total:           c.lineTotal,
         landing_cost_per_unit: Math.round(landingCost * 10000) / 10000,
       };
     });
 
-    const netPayable = taxableTotal + cgstTotal + sgstTotal + igstTotal + h.other_charges + h.round_off;
+    const netPayable = round2(taxableTotal + cgstTotal + sgstTotal + igstTotal + h.other_charges + h.round_off);
 
     // Due date
     const invoiceDateObj = new Date(h.invoice_date);

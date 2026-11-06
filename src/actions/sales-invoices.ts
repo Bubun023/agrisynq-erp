@@ -4,21 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getUserContext, writeAuditLog } from "./context";
-
-// ─── Helpers ──────────────────────────────────────────────────
-function computeGst(taxable: number, rate: number, interstate: boolean) {
-  const total = (taxable * rate) / 100;
-  if (interstate) return { cgst: 0, cgstRate: 0, sgst: 0, sgstRate: 0, igst: total, igstRate: rate };
-  const half = total / 2;
-  return { cgst: half, cgstRate: rate / 2, sgst: half, sgstRate: rate / 2, igst: 0, igstRate: 0 };
-}
-
-// Determine invoice type from customer GST status + amount
-function resolveInvoiceType(customerGstin: string | null, isInterstate: boolean, netAmount: number): string {
-  if (customerGstin && customerGstin.length === 15) return "B2B";
-  if (isInterstate || netAmount > 250000) return "B2C_LARGE";
-  return "B2C_SMALL";
-}
+import { computeLine, sumLines, resolveInvoiceType, round2 } from "@/lib/gst";
 
 // ─── Schemas ──────────────────────────────────────────────────
 const InvLineSchema = z.object({
@@ -100,24 +86,18 @@ export async function createSalesInvoice(_prev: SIFormState, formData: FormData)
     const h = parsedHeader.data;
     const lines = parsedLines.data;
 
-    // Server-side financial calculations (NEVER trusted from browser)
-    let grossAmt = 0, totalDiscount = 0, taxableTotal = 0;
-    let cgstTotal = 0, sgstTotal = 0, igstTotal = 0;
+    // Server-side financial calculations (NEVER trusted from browser).
+    // Header totals are the sum of the rounded line figures (see lib/gst.ts).
+    const calcs = lines.map((line) => computeLine({
+      qty: line.qty, unitPrice: line.unit_price, discountPercent: line.discount_percent,
+      gstRate: line.gst_rate, isInterstate: h.is_interstate,
+    }));
+    const tot = sumLines(calcs);
+    const grossAmt = tot.gross, totalDiscount = tot.discount, taxableTotal = tot.taxable;
+    const cgstTotal = tot.cgst, sgstTotal = tot.sgst, igstTotal = tot.igst;
 
     const computedLines = lines.map((line, i) => {
-      const gross = line.qty * line.unit_price;
-      const discAmt = gross * line.discount_percent / 100;
-      const taxable = gross - discAmt;
-      const g = computeGst(taxable, line.gst_rate, h.is_interstate);
-      const lineTotal = taxable + g.cgst + g.sgst + g.igst;
-
-      grossAmt     += gross;
-      totalDiscount += discAmt;
-      taxableTotal  += taxable;
-      cgstTotal     += g.cgst;
-      sgstTotal     += g.sgst;
-      igstTotal     += g.igst;
-
+      const c = calcs[i];
       return {
         tenant_id: ctx.tenantId, line_no: i + 1,
         so_line_id:      line.so_line_id || null,
@@ -132,18 +112,18 @@ export async function createSalesInvoice(_prev: SIFormState, formData: FormData)
         unit_price:      line.unit_price,
         mrp:             line.mrp ?? null,
         discount_percent: line.discount_percent,
-        discount_amount:  Math.round(discAmt * 100) / 100,
-        taxable_amount:   Math.round(taxable * 100) / 100,
+        discount_amount:  c.discount,
+        taxable_amount:   c.taxable,
         gst_rate:        line.gst_rate,
-        cgst_rate:       g.cgstRate, cgst_amount: Math.round(g.cgst * 100) / 100,
-        sgst_rate:       g.sgstRate, sgst_amount: Math.round(g.sgst * 100) / 100,
-        igst_rate:       g.igstRate, igst_amount: Math.round(g.igst * 100) / 100,
+        cgst_rate:       c.cgstRate, cgst_amount: c.cgst,
+        sgst_rate:       c.sgstRate, sgst_amount: c.sgst,
+        igst_rate:       c.igstRate, igst_amount: c.igst,
         cess_amount:     0,
-        line_total:      Math.round(lineTotal * 100) / 100,
+        line_total:      c.lineTotal,
       };
     });
 
-    const netReceivable = taxableTotal + cgstTotal + sgstTotal + igstTotal + h.other_charges + h.round_off;
+    const netReceivable = round2(taxableTotal + cgstTotal + sgstTotal + igstTotal + h.other_charges + h.round_off);
     const invoiceType = resolveInvoiceType(h.customer_gstin || null, h.is_interstate, netReceivable);
 
     const dueDate = h.payment_terms_days > 0

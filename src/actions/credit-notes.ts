@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getUserContext, writeAuditLog } from "./context";
+import { computeLine, sumLines, resolveInvoiceType, round2 } from "@/lib/gst";
 
 const CNLineSchema = z.object({
   product_id:     z.string().uuid(),
@@ -47,15 +48,14 @@ export async function createCreditNote(_prev: CNFormState, formData: FormData): 
     const lines = parsedLines.data;
 
     const isInterstate = origInv.is_interstate as boolean;
-    let totalTaxable = 0, totalCgst = 0, totalSgst = 0, totalIgst = 0;
+    const calcs = lines.map((l) => computeLine({
+      qty: l.return_qty, unitPrice: l.unit_price, gstRate: l.gst_rate, isInterstate,
+    }));
+    const tot = sumLines(calcs);
+    const totalTaxable = tot.taxable, totalCgst = tot.cgst, totalSgst = tot.sgst, totalIgst = tot.igst;
 
     const computedLines = lines.map((l, i) => {
-      const taxable = l.return_qty * l.unit_price;
-      const gstAmt = (taxable * l.gst_rate) / 100;
-      const cgst = isInterstate ? 0 : gstAmt / 2;
-      const sgst = isInterstate ? 0 : gstAmt / 2;
-      const igst = isInterstate ? gstAmt : 0;
-      totalTaxable += taxable; totalCgst += cgst; totalSgst += sgst; totalIgst += igst;
+      const c = calcs[i];
       return {
         tenant_id: ctx.tenantId, line_no: i + 1,
         original_line_id: l.original_line_id || null,
@@ -63,16 +63,16 @@ export async function createCreditNote(_prev: CNFormState, formData: FormData): 
         batch_id: l.batch_id || null,
         return_qty: l.return_qty, unit_of_measure: l.unit_of_measure,
         unit_price: l.unit_price,
-        taxable_amount: Math.round(taxable * 100) / 100,
+        taxable_amount: c.taxable,
         gst_rate: l.gst_rate,
-        cgst_amount: Math.round(cgst * 100) / 100,
-        sgst_amount: Math.round(sgst * 100) / 100,
-        igst_amount: Math.round(igst * 100) / 100,
-        line_total: Math.round((taxable + cgst + sgst + igst) * 100) / 100,
+        cgst_amount: c.cgst,
+        sgst_amount: c.sgst,
+        igst_amount: c.igst,
+        line_total: c.lineTotal,
       };
     });
 
-    const totalAmount = totalTaxable + totalCgst + totalSgst + totalIgst;
+    const totalAmount = round2(totalTaxable + totalCgst + totalSgst + totalIgst);
 
     // Guard: CN total cannot exceed original invoice amount
     if (totalAmount > (origInv.net_receivable as number) + 0.01) {
@@ -106,7 +106,8 @@ export async function createCreditNote(_prev: CNFormState, formData: FormData): 
     if (cnErr || !cn) throw new Error(cnErr?.message ?? "Failed to create credit note.");
 
     const lineInserts = computedLines.map((l) => ({ ...l, credit_note_id: cn.id }));
-    await supabase.from("credit_note_lines").insert(lineInserts);
+    const { error: clErr } = await supabase.from("credit_note_lines").insert(lineInserts);
+    if (clErr) throw new Error("Credit note saved but lines failed: " + clErr.message);
 
     await writeAuditLog({ ctx, action: "INSERT", tableName: "credit_notes", recordId: cn.id,
       newValues: { cn_number: cn.credit_note_number, original_invoice_id: originalInvoiceId, total_amount: totalAmount } });

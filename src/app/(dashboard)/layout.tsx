@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
+import { getUserContext } from "@/actions/context";
+import { signOutAction } from "@/actions/auth";
 
 export const metadata: Metadata = {
   title: { template: "%s — FertiLedger ERP", default: "FertiLedger ERP" },
@@ -28,6 +30,26 @@ export default async function DashboardLayout({
 
   if (!user) {
     redirect("/login");
+  }
+
+  // Block unprovisioned accounts (no role/organisation) instead of showing
+  // empty pages that look like "no data".
+  const ctx = await getUserContext();
+  if (!ctx.provisioned) {
+    return (
+      <div className="min-h-screen bg-surface-bg flex items-center justify-center p-6">
+        <div className="card p-8 max-w-md text-center space-y-3">
+          <h1 className="text-lg font-semibold text-ink">Account not set up yet</h1>
+          <p className="text-sm text-ink-muted">
+            You are signed in as {user.email}, but your account has not been assigned to an
+            organisation or role. Ask your administrator to add you, then sign in again.
+          </p>
+          <form action={signOutAction}>
+            <button type="submit" className="btn btn-primary">Sign out</button>
+          </form>
+        </div>
+      </div>
+    );
   }
 
   return (

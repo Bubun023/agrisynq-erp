@@ -17,6 +17,8 @@ export interface UserContext {
   organisationId: string;
   branchId: string | null;
   roleName: string | null;
+  /** false when the user has no user_roles row (account not set up yet). */
+  provisioned: boolean;
 }
 
 /**
@@ -73,6 +75,7 @@ export async function getUserContext(): Promise<UserContext> {
       organisationId: user.id,    // placeholder — no real org yet
       branchId: null,
       roleName: null,
+      provisioned: false,
     };
   }
 
@@ -88,6 +91,7 @@ export async function getUserContext(): Promise<UserContext> {
     organisationId: roleData.organisation_id as string,
     branchId: roleData.branch_id as string | null,
     roleName,
+    provisioned: true,
   };
 }
 
