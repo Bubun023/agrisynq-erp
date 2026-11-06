@@ -119,50 +119,21 @@ export async function createCreditNote(_prev: CNFormState, formData: FormData): 
 }
 
 // ─── Post Credit Note ─────────────────────────────────────────
-export async function postCreditNote(cnId: string): Promise<CNFormState> {
+export async function postCreditNote(cnId: string) {
   try {
     const supabase = createClient();
     const ctx = await getUserContext();
 
-    const { data: cn, error: fetchErr } = await supabase.from("credit_notes")
-      .select(`id, credit_note_number, status, goods_returned, return_to_location,
-               credit_note_lines(product_id, batch_id, return_qty, unit_of_measure, unit_price,
-                                  gst_rate, cgst_amount, sgst_amount, igst_amount)`)
-      .eq("id", cnId).eq("tenant_id", ctx.tenantId).single();
+    // Atomic: caps against the original invoice, returns stock + reverses COGS when goods
+    // came back, posts the reversal journal and settles the receivable (migration 038).
+    const { error } = await supabase.rpc("post_credit_note", { p_cn_id: cnId });
+    if (error) throw new Error(error.message);
 
-    if (fetchErr || !cn) throw new Error("Credit note not found.");
-    if (cn.status !== "DRAFT") throw new Error("Only DRAFT credit notes can be posted.");
-
-    // If goods were returned, reverse the stock movement
-    if (cn.goods_returned && cn.return_to_location) {
-      const ledgerRows = (cn.credit_note_lines ?? []).map((l) => ({
-        tenant_id:            ctx.tenantId,
-        movement_type:        "SALES_RETURN",
-        movement_date:        new Date().toISOString().split("T")[0],
-        product_id:           l.product_id,
-        batch_id:             l.batch_id ?? null,
-        to_location_id:       cn.return_to_location,
-        qty:                  l.return_qty,   // positive = stock in (returned)
-        unit_of_measure:      l.unit_of_measure,
-        rate_per_unit:        l.unit_price,
-        gst_rate:             l.gst_rate,
-        gst_amount:           (l.cgst_amount ?? 0) + (l.sgst_amount ?? 0) + (l.igst_amount ?? 0),
-        source_document_type: "CREDIT_NOTE",
-        source_document_id:   cnId,
-        source_document_no:   cn.credit_note_number,
-        narration:            `Sales Return — ${cn.credit_note_number}`,
-        created_by:           ctx.userId,
-      }));
-      const { error: ledgerErr } = await supabase.from("stock_ledger").insert(ledgerRows);
-      if (ledgerErr) throw new Error("Stock reversal failed: " + ledgerErr.message);
-    }
-
-    await supabase.from("credit_notes").update({
-      status: "POSTED", posted_at: new Date().toISOString(), posted_by: ctx.userId,
-    }).eq("id", cnId).eq("tenant_id", ctx.tenantId);
-
+    await writeAuditLog({ ctx, action: "POST", tableName: "credit_notes", recordId: cnId,
+      newValues: { status: "POSTED" } });
     revalidatePath("/sales/credit-notes");
     revalidatePath("/inventory/ledger");
+    revalidatePath("/accounting/ar");
     return { success: true, cnId };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : "Failed to post credit note." };

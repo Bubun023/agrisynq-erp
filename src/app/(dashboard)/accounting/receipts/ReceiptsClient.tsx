@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import { CreditCard, Plus, X, AlertCircle, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
-import { createPaymentReceipt } from '@/actions/accounting';
+import { createPaymentReceipt, postPaymentReceipt } from '@/actions/accounting';
 
 type Allocation = { id: string; invoice_type: string; invoice_id: string; allocated_amount: number };
 
@@ -35,6 +35,17 @@ export default function ReceiptsClient({ initialData }: { initialData: Receipt[]
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'RECEIPT' | 'PAYMENT'>('ALL');
   const [search, setSearch] = useState('');
   const [showSlide, setShowSlide] = useState(false);
+  const [postingId, setPostingId] = useState<string | null>(null);
+
+  async function handlePost(r: Receipt) {
+    if (!confirm(`Post ${r.receipt_no}? This creates the accounting entry and settles the party's oldest outstanding invoices. It cannot be edited afterwards.`)) return;
+    setPostingId(r.id);
+    const res = await postPaymentReceipt(r.id);
+    setPostingId(null);
+    if (!res.success) { toast.error(res.error ?? 'Failed to post.'); return; }
+    setReceipts((p) => p.map((x) => (x.id === r.id ? { ...x, status: 'POSTED' } : x)));
+    toast.success(`${r.receipt_no} posted.`);
+  }
 
   const filtered = receipts.filter((r) => {
     const matchStatus = statusFilter === 'ALL' || r.status === statusFilter;
@@ -111,7 +122,7 @@ export default function ReceiptsClient({ initialData }: { initialData: Receipt[]
             <thead>
               <tr>
                 <th>Receipt No</th><th>Date</th><th>Type</th><th>Party</th><th>Mode</th>
-                <th>Ref No</th><th className="text-right">Amount</th><th>Status</th>
+                <th>Ref No</th><th className="text-right">Amount</th><th>Status</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -134,6 +145,13 @@ export default function ReceiptsClient({ initialData }: { initialData: Receipt[]
                     {r.receipt_type === 'PAYMENT' ? '−' : '+'}{formatCurrency(r.amount)}
                   </td>
                   <td><span className={cn('badge', r.status === 'POSTED' ? 'badge-success' : r.status === 'DRAFT' ? 'badge-warning' : 'badge-danger')}>{r.status.charAt(0) + r.status.slice(1).toLowerCase()}</span></td>
+                  <td className="text-right">
+                    {r.status === 'DRAFT' && (
+                      <button onClick={() => handlePost(r)} disabled={postingId === r.id} className="btn-primary text-xs px-3 py-1 disabled:opacity-50">
+                        {postingId === r.id ? 'Posting…' : 'Post'}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

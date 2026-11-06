@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Rebuilds a THROWAWAY Postgres (Docker), applies migrations 001..N and runs the SQL tests.
+# Never point this at a real Supabase project - it drops and recreates the "fl" database.
+#   bash supabase/tests/run_db_tests.sh
+set -euo pipefail
+export MSYS_NO_PATHCONV=1                       # Git Bash on Windows: stop it rewriting /paths
+HERE="$(cd "$(dirname "$0")" && pwd)"
+MIG="$HERE/../migrations"
+# docker.exe needs native paths on Windows (Git Bash); cygpath is absent elsewhere
+w() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
+C=fl-pg
+
+docker inspect "$C" >/dev/null 2>&1 || docker run -d --name "$C" -e POSTGRES_PASSWORD=pw postgres:16-alpine >/dev/null
+until docker exec "$C" pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+
+docker exec "$C" psql -U postgres -q -c "DROP DATABASE IF EXISTS fl WITH (FORCE)" -c "CREATE DATABASE fl"
+docker cp "$(w "$HERE/supabase_stub.sql")" "$C:/stub.sql" >/dev/null
+docker exec "$C" psql -U postgres -d fl -v ON_ERROR_STOP=1 -q -f /stub.sql >/dev/null
+
+for f in "$MIG"/0*.sql; do
+  docker cp "$(w "$f")" "$C:/m.sql" >/dev/null
+  if ! out=$(docker exec "$C" psql -U postgres -d fl -v ON_ERROR_STOP=1 -q -1 -f /m.sql 2>&1); then
+    echo "MIGRATION FAILED: $(basename "$f")"; echo "$out" | grep -iE "error|detail|context" | head -5; exit 1
+  fi
+  echo "ok   $(basename "$f")"
+done
+
+for t in "$HERE"/e2e_*.sql; do
+  docker cp "$(w "$t")" "$C:/t.sql" >/dev/null
+  docker exec "$C" psql -U postgres -d fl -v ON_ERROR_STOP=1 -q -f /t.sql 2>&1 | grep -E "ERROR|FAIL|PASSED|ok  " | sed 's/psql:[^ ]* NOTICE:  //'
+done

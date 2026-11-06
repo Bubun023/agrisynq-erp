@@ -220,150 +220,20 @@ export async function postPurchaseInvoice(invoiceId: string): Promise<PIFormStat
     const supabase = createClient();
     const ctx = await getUserContext();
 
-    // Fetch invoice with lines
-    const { data: invoice, error: fetchErr } = await supabase
-      .from("purchase_invoices")
-      .select(`
-        id, invoice_number, invoice_date, status, received_at_location,
-        supplier_id, organisation_id,
-        purchase_invoice_lines (
-          id, product_id, hsn_code, batch_number, manufacture_date, expiry_date,
-          received_qty, free_qty, unit_of_measure,
-          unit_price, taxable_amount, gst_rate,
-          cgst_amount, sgst_amount, igst_amount,
-          landing_cost_per_unit, line_total
-        )
-      `)
-      .eq("id", invoiceId)
-      .eq("tenant_id", ctx.tenantId)
-      .single();
-
-    if (fetchErr || !invoice) throw new Error("Invoice not found.");
-    if (invoice.status !== "DRAFT") throw new Error("Only DRAFT invoices can be posted.");
-
-    const lines = invoice.purchase_invoice_lines ?? [];
-    if (lines.length === 0) throw new Error("Invoice has no line items.");
-
-    // For each line: create batch_register entry + GRN ledger entry
-    const batchRows = [];
-    const ledgerRows = [];
-    const lineUpdates = [];
-
-    for (const line of lines) {
-      const totalQty = line.received_qty + line.free_qty;
-
-      // Check if batch already exists for this product
-      const batchNum = line.batch_number || `${invoice.invoice_number}-L${lines.indexOf(line) + 1}`;
-
-      const { data: existingBatch } = await supabase
-        .from("batch_register")
-        .select("id")
-        .eq("tenant_id", ctx.tenantId)
-        .eq("organisation_id", ctx.organisationId ?? invoice.organisation_id)
-        .eq("product_id", line.product_id)
-        .eq("batch_number", batchNum)
-        .maybeSingle();
-
-      let batchId: string;
-
-      if (existingBatch) {
-        // Update existing batch qty
-        batchId = existingBatch.id;
-        await supabase.from("batch_register").update({
-          current_qty: supabase.rpc("get_stock_balance", { p_tenant_id: ctx.tenantId, p_product_id: line.product_id }) as unknown as number,
-          updated_by: ctx.userId,
-        }).eq("id", batchId);
-      } else {
-        // Create new batch
-        const { data: newBatch, error: batchErr } = await supabase
-          .from("batch_register")
-          .insert([{
-            tenant_id:              ctx.tenantId,
-            organisation_id:        invoice.organisation_id,
-            branch_id:              ctx.branchId,
-            batch_number:           batchNum,
-            product_id:             line.product_id,
-            supplier_id:            invoice.supplier_id,
-            purchase_invoice_id:    invoiceId,
-            location_id:            invoice.received_at_location,
-            opening_qty:            totalQty,
-            current_qty:            totalQty,
-            unit_of_measure:        line.unit_of_measure,
-            purchase_rate:          line.unit_price,
-            purchase_rate_with_tax: line.landing_cost_per_unit,
-            landing_cost_per_unit:  line.landing_cost_per_unit,
-            manufacture_date:       line.manufacture_date || null,
-            expiry_date:            line.expiry_date || null,
-            status:                 "OPEN",
-            created_by:             ctx.userId,
-          }])
-          .select("id")
-          .single();
-
-        if (batchErr || !newBatch) throw new Error("Failed to create batch: " + batchErr?.message);
-        batchId = newBatch.id;
-      }
-
-      // Stock ledger GRN entry
-      ledgerRows.push({
-        tenant_id:            ctx.tenantId,
-        organisation_id:      invoice.organisation_id,
-        branch_id:            ctx.branchId,
-        movement_type:        "GRN",
-        movement_date:        invoice.invoice_date,
-        product_id:           line.product_id,
-        batch_id:             batchId,
-        to_location_id:       invoice.received_at_location,
-        party_id:             invoice.supplier_id,
-        qty:                  totalQty,
-        unit_of_measure:      line.unit_of_measure,
-        rate_per_unit:        line.unit_price,
-        gst_rate:             line.gst_rate,
-        gst_amount:           (line.cgst_amount + line.sgst_amount + line.igst_amount),
-        source_document_type: "PURCHASE_INVOICE",
-        source_document_id:   invoiceId,
-        source_document_no:   invoice.invoice_number,
-        narration:            `GRN — ${invoice.invoice_number}`,
-        created_by:           ctx.userId,
-      });
-
-      lineUpdates.push({ lineId: line.id, batchId });
-    }
-
-    // Insert all ledger entries
-    const { error: ledgerErr } = await supabase.from("stock_ledger").insert(ledgerRows);
-    if (ledgerErr) throw new Error("GRN stock entries failed: " + ledgerErr.message);
-
-    // Update line batch_id references
-    for (const lu of lineUpdates) {
-      await supabase.from("purchase_invoice_lines")
-        .update({ batch_id: lu.batchId })
-        .eq("id", lu.lineId);
-    }
-
-    // Mark invoice as POSTED
-    const { error: postErr } = await supabase
-      .from("purchase_invoices")
-      .update({
-        status:     "POSTED",
-        posted_at:  new Date().toISOString(),
-        posted_by:  ctx.userId,
-        updated_by: ctx.userId,
-      })
-      .eq("id", invoiceId)
-      .eq("tenant_id", ctx.tenantId);
-
-    if (postErr) throw new Error("Failed to mark invoice as posted: " + postErr.message);
+    // One atomic database call: creates/updates batches, writes GRN stock entries,
+    // the stock + ITC + creditors journal and marks the invoice POSTED (migration 038).
+    const { error } = await supabase.rpc("post_purchase_invoice", { p_invoice_id: invoiceId });
+    if (error) throw new Error(error.message);
 
     await writeAuditLog({
       ctx, action: "POST", tableName: "purchase_invoices",
-      recordId: invoiceId,
-      newValues: { status: "POSTED", posted_at: new Date().toISOString() },
+      recordId: invoiceId, newValues: { status: "POSTED" },
     });
 
     revalidatePath("/purchases/invoices");
     revalidatePath("/inventory/batches");
     revalidatePath("/inventory/ledger");
+    revalidatePath("/accounting/ap");
     return { success: true, invoiceId };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : "Failed to post invoice." };

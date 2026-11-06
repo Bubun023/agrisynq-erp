@@ -185,54 +185,16 @@ export async function postSalesInvoice(invoiceId: string): Promise<SIFormState> 
     const supabase = createClient();
     const ctx = await getUserContext();
 
-    const { data: inv, error: fetchErr } = await supabase.from("sales_invoices")
-      .select(`id, invoice_number, invoice_date, status, from_location, customer_id,
-               organisation_id,
-               sales_invoice_lines(id, product_id, hsn_code, batch_id, qty, unit_of_measure,
-                                   unit_price, gst_rate, igst_amount, cgst_amount, sgst_amount, line_total)`)
-      .eq("id", invoiceId).eq("tenant_id", ctx.tenantId).single();
-
-    if (fetchErr || !inv) throw new Error("Invoice not found.");
-    if (inv.status !== "DRAFT") throw new Error("Only DRAFT invoices can be posted.");
-
-    const lines = inv.sales_invoice_lines ?? [];
-    if (lines.length === 0) throw new Error("Invoice has no line items.");
-
-    // Reduce stock per line — DELIVERY movement
-    const ledgerRows = lines.map((line) => ({
-      tenant_id:            ctx.tenantId,
-      organisation_id:      inv.organisation_id,
-      branch_id:            ctx.branchId,
-      movement_type:        "DELIVERY",
-      movement_date:        inv.invoice_date,
-      product_id:           line.product_id,
-      batch_id:             line.batch_id ?? null,
-      from_location_id:     inv.from_location,
-      party_id:             inv.customer_id ?? null,
-      qty:                  -(line.qty),   // negative = stock out
-      unit_of_measure:      line.unit_of_measure,
-      rate_per_unit:        line.unit_price,
-      gst_rate:             line.gst_rate,
-      gst_amount:           (line.cgst_amount ?? 0) + (line.sgst_amount ?? 0) + (line.igst_amount ?? 0),
-      source_document_type: "SALES_INVOICE",
-      source_document_id:   invoiceId,
-      source_document_no:   inv.invoice_number,
-      narration:            `Sale — ${inv.invoice_number}`,
-      created_by:           ctx.userId,
-    }));
-
-    const { error: ledgerErr } = await supabase.from("stock_ledger").insert(ledgerRows);
-    if (ledgerErr) throw new Error("Stock ledger failed: " + ledgerErr.message);
-
-    const { error: postErr } = await supabase.from("sales_invoices")
-      .update({ status: "POSTED", posted_at: new Date().toISOString(), posted_by: ctx.userId })
-      .eq("id", invoiceId).eq("tenant_id", ctx.tenantId);
-    if (postErr) throw new Error("Failed to post: " + postErr.message);
+    // One atomic database call: validates stock/batches, writes the stock ledger,
+    // the cost-of-goods + sales + GST journal and marks the invoice POSTED (migration 038).
+    const { error } = await supabase.rpc("post_sales_invoice", { p_invoice_id: invoiceId });
+    if (error) throw new Error(error.message);
 
     await writeAuditLog({ ctx, action: "POST", tableName: "sales_invoices", recordId: invoiceId,
       newValues: { status: "POSTED" } });
     revalidatePath("/sales/invoices");
     revalidatePath("/inventory/ledger");
+    revalidatePath("/accounting/ar");
     return { success: true, invoiceId };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : "Failed to post invoice." };

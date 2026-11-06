@@ -359,6 +359,89 @@ export async function createPaymentReceipt(input: CreateReceiptInput) {
   return { success: true, data };
 }
 
+/**
+ * Posts a DRAFT receipt/payment. If no allocations were recorded, the amount is
+ * automatically allocated oldest-due-first to the party's outstanding invoices.
+ * Everything else (journal, invoice outstanding update) happens atomically in
+ * rpc_post_payment_receipt (migrations 030/037).
+ */
+export async function postPaymentReceipt(receiptId: string) {
+  const supabase = createClient();
+  const ctx = await getUserContext();
+
+  const { data: rc, error: rcErr } = await supabase
+    .from('payment_receipts')
+    .select('id, receipt_type, party_id, amount, payment_mode, bank_account_id, status')
+    .eq('id', receiptId)
+    .eq('tenant_id', ctx.tenantId)
+    .single();
+  if (rcErr || !rc) return { success: false, error: 'Receipt not found.' };
+  if (rc.status !== 'DRAFT') return { success: false, error: 'Only DRAFT receipts can be posted.' };
+
+  const { data: accts } = await supabase
+    .from('chart_of_accounts')
+    .select('id, account_code')
+    .eq('tenant_id', ctx.tenantId)
+    .in('account_code', ['1001', '1002', '1010', '2001']);
+  const byCode: Record<string, string> = Object.fromEntries((accts ?? []).map((a) => [a.account_code, a.id]));
+  const cashOrBank = rc.bank_account_id ?? (rc.payment_mode === 'CASH' ? byCode['1001'] : byCode['1002']);
+  const partyAcct = rc.receipt_type === 'RECEIPT' ? byCode['1010'] : byCode['2001'];
+  if (!cashOrBank || !partyAcct) {
+    return { success: false, error: 'Chart of accounts is incomplete. Seed the chart of accounts first.' };
+  }
+
+  // Auto-allocate (FIFO by due date) when the user did not allocate manually
+  const { count } = await supabase
+    .from('receipt_allocations')
+    .select('id', { count: 'exact', head: true })
+    .eq('receipt_id', receiptId);
+  if (!count) {
+    const isReceipt = rc.receipt_type === 'RECEIPT';
+    const { data: invs } = await supabase
+      .from(isReceipt ? 'sales_invoices' : 'purchase_invoices')
+      .select('id, outstanding_amount')
+      .eq('tenant_id', ctx.tenantId)
+      .eq(isReceipt ? 'customer_id' : 'supplier_id', rc.party_id)
+      .eq('status', 'POSTED')
+      .gt('outstanding_amount', 0)
+      .order('due_date', { ascending: true, nullsFirst: false })
+      .order('invoice_date', { ascending: true });
+
+    let remaining = Number(rc.amount);
+    const rows: { tenant_id: string; receipt_id: string; invoice_type: string; invoice_id: string; allocated_amount: number }[] = [];
+    for (const inv of invs ?? []) {
+      if (remaining <= 0.001) break;
+      const take = Math.min(remaining, Number(inv.outstanding_amount));
+      rows.push({
+        tenant_id: ctx.tenantId, receipt_id: receiptId,
+        invoice_type: isReceipt ? 'SALES_INVOICE' : 'PURCHASE_INVOICE',
+        invoice_id: inv.id, allocated_amount: Math.round(take * 100) / 100,
+      });
+      remaining -= take;
+    }
+    if (rows.length) {
+      const { error: allocErr } = await supabase.from('receipt_allocations').insert(rows);
+      if (allocErr) return { success: false, error: allocErr.message };
+    }
+  }
+
+  const { error } = await supabase.rpc('rpc_post_payment_receipt', {
+    p_tenant_id:      ctx.tenantId,
+    p_receipt_id:     receiptId,
+    p_user_id:        ctx.userId,
+    p_debit_account:  rc.receipt_type === 'RECEIPT' ? cashOrBank : partyAcct,
+    p_credit_account: rc.receipt_type === 'RECEIPT' ? partyAcct : cashOrBank,
+  });
+  if (error) return { success: false, error: error.message };
+
+  await writeAuditLog({ ctx, action: 'POST', tableName: 'payment_receipts', recordId: receiptId, newValues: { status: 'POSTED' } });
+  revalidatePath('/accounting/receipts');
+  revalidatePath('/accounting/ar');
+  revalidatePath('/accounting/ap');
+  revalidatePath('/accounting/trial-balance');
+  return { success: true };
+}
+
 // ============================================================================
 // TRIAL BALANCE
 // ============================================================================
@@ -381,72 +464,69 @@ export async function getTrialBalance() {
 // AR / AP AGEING
 // ============================================================================
 
-export async function getReceivablesAgeing() {
+type AgeingInvoiceRow = {
+  id: string; invoice_no: string; invoice_date: string; due_date: string | null;
+  grand_total: number; amount_paid: number; outstanding: number; daysOverdue: number;
+  party: { id: string; name: string; gstin: string | null } | null;
+};
+
+function toAgeingRow(
+  inv: {
+    id: string; invoice_number: string; invoice_date: string; due_date: string | null;
+    total: number; paid: number; party: unknown;
+  },
+  today: string
+): AgeingInvoiceRow | null {
+  const outstanding = Math.round((Number(inv.total) - Number(inv.paid)) * 100) / 100;
+  if (outstanding <= 0.001) return null;
+  const dueDate = inv.due_date ?? inv.invoice_date;
+  const daysOverdue = Math.floor((new Date(today).getTime() - new Date(dueDate).getTime()) / 86400000);
+  const party = Array.isArray(inv.party) ? inv.party[0] : inv.party;
+  return {
+    id: inv.id, invoice_no: inv.invoice_number, invoice_date: inv.invoice_date, due_date: inv.due_date,
+    grand_total: Number(inv.total), amount_paid: Number(inv.paid), outstanding, daysOverdue,
+    party: (party as AgeingInvoiceRow['party']) ?? null,
+  };
+}
+
+export async function getReceivablesAgeing(): Promise<AgeingInvoiceRow[]> {
   const supabase = createClient();
   const ctx = await getUserContext();
-
   const today = new Date().toISOString().split('T')[0];
 
   const { data, error } = await supabase
     .from('sales_invoices')
-    .select(`
-      id, invoice_no, invoice_date, due_date,
-      grand_total, amount_paid,
-      party:parties(id, name, gstin)
-    `)
+    .select('id, invoice_number, invoice_date, due_date, net_receivable, amount_received, party:parties!customer_id(id, name, gstin)')
     .eq('tenant_id', ctx.tenantId)
+    .eq('organisation_id', ctx.organisationId)
     .eq('status', 'POSTED')
     .order('due_date', { ascending: true });
 
   if (error) throw new Error(error.message);
 
-  const rows = (data ?? [])
-    .map((inv) => {
-      const outstanding = (inv.grand_total ?? 0) - (inv.amount_paid ?? 0);
-      if (outstanding <= 0.001) return null;
-      const dueDate = inv.due_date ?? inv.invoice_date;
-      const daysOverdue = Math.floor(
-        (new Date(today).getTime() - new Date(dueDate).getTime()) / 86400000
-      );
-      return { ...inv, outstanding, daysOverdue };
-    })
-    .filter(Boolean);
-
-  return rows as NonNullable<(typeof rows)[number]>[];
+  return (data ?? [])
+    .map((i) => toAgeingRow({ ...i, total: i.net_receivable, paid: i.amount_received }, today))
+    .filter((r): r is AgeingInvoiceRow => r !== null);
 }
 
-export async function getPayablesAgeing() {
+export async function getPayablesAgeing(): Promise<AgeingInvoiceRow[]> {
   const supabase = createClient();
   const ctx = await getUserContext();
-
   const today = new Date().toISOString().split('T')[0];
 
   const { data, error } = await supabase
     .from('purchase_invoices')
-    .select(`
-      id, invoice_no, invoice_date, due_date,
-      grand_total, amount_paid,
-      party:parties(id, name, gstin)
-    `)
+    .select('id, invoice_number, invoice_date, due_date, net_payable, amount_paid, party:parties!supplier_id(id, name, gstin)')
     .eq('tenant_id', ctx.tenantId)
+    .eq('organisation_id', ctx.organisationId)
     .eq('status', 'POSTED')
     .order('due_date', { ascending: true });
 
   if (error) throw new Error(error.message);
 
-  const rows = (data ?? [])
-    .map((inv) => {
-      const outstanding = (inv.grand_total ?? 0) - (inv.amount_paid ?? 0);
-      if (outstanding <= 0.001) return null;
-      const dueDate = inv.due_date ?? inv.invoice_date;
-      const daysOverdue = Math.floor(
-        (new Date(today).getTime() - new Date(dueDate).getTime()) / 86400000
-      );
-      return { ...inv, outstanding, daysOverdue };
-    })
-    .filter(Boolean);
-
-  return rows as NonNullable<(typeof rows)[number]>[];
+  return (data ?? [])
+    .map((i) => toAgeingRow({ ...i, total: i.net_payable, paid: i.amount_paid }, today))
+    .filter((r): r is AgeingInvoiceRow => r !== null);
 }
 
 // ============================================================================
