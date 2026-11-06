@@ -4,9 +4,8 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   typescript: {
-    // Allows production builds to successfully complete even if
-    // your project has TypeScript errors.
-    ignoreBuildErrors: true,
+    // Type errors must fail the build (tsc --noEmit is clean as of Phase 12).
+    ignoreBuildErrors: false,
   },
 };
 
