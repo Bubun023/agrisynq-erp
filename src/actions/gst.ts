@@ -64,7 +64,7 @@ export interface GstPurchaseRow {
 }
 
 export interface Gstr3bRow {
-  org_id: string;
+  organisation_id: string;
   return_period: string;
   taxable_sales: number;
   cgst_on_sales: number;
@@ -99,7 +99,8 @@ export interface Gstr2bImport {
 export interface Gstr2bItem {
   id: string;
   import_id: string;
-  org_id: string;
+  tenant_id?: string;
+  organisation_id: string;
   return_period: string;
   supplier_gstin: string;
   supplier_name: string | null;
@@ -141,7 +142,7 @@ export async function getGstSalesRegister(period?: string): Promise<GstSalesRow[
   let q = supabase
     .from('vw_gst_sales_register')
     .select('*')
-    .eq('org_id', ctx.organisationId)
+    .eq('organisation_id', ctx.organisationId)
     .order('invoice_date', { ascending: false });
   if (period) q = q.eq('return_period', period);
   const { data, error } = await q;
@@ -158,7 +159,7 @@ export async function getGstPurchaseRegister(period?: string): Promise<GstPurcha
   let q = supabase
     .from('vw_gst_purchase_register')
     .select('*')
-    .eq('org_id', ctx.organisationId)
+    .eq('organisation_id', ctx.organisationId)
     .order('invoice_date', { ascending: false });
   if (period) q = q.eq('return_period', period);
   const { data, error } = await q;
@@ -213,7 +214,7 @@ export async function getGstr3bSummary(period?: string): Promise<Gstr3bRow[]> {
   let q = supabase
     .from('vw_gstr3b_summary')
     .select('*')
-    .eq('org_id', ctx.organisationId)
+    .eq('organisation_id', ctx.organisationId)
     .order('return_period', { ascending: false });
   if (period) q = q.eq('return_period', period);
   const { data, error } = await q;
@@ -230,7 +231,7 @@ export async function getReturnPeriods(type?: string): Promise<ReturnPeriod[]> {
   let q = supabase
     .from('gst_return_periods')
     .select('*')
-    .eq('org_id', ctx.organisationId)
+    .eq('organisation_id', ctx.organisationId)
     .order('return_period', { ascending: false });
   if (type) q = q.eq('return_type', type);
   const { data, error } = await q;
@@ -254,7 +255,7 @@ export async function markReturnFiled(
       notes: notes ?? null,
     })
     .eq('id', id)
-    .eq('org_id', ctx.organisationId);
+    .eq('organisation_id', ctx.organisationId);
   if (error) return { success: false, error: error.message };
   await writeAuditLog({ ctx, action: 'MARK_FILED', tableName: 'gst_return_periods', recordId: id, newValues: { arn } });
   revalidatePath('/gst');
@@ -270,7 +271,7 @@ export async function getGstr2bImports(): Promise<Gstr2bImport[]> {
   const { data, error } = await supabase
     .from('gstr2b_imports')
     .select('*')
-    .eq('org_id', ctx.organisationId)
+    .eq('organisation_id', ctx.organisationId)
     .order('imported_at', { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as Gstr2bImport[];
@@ -283,7 +284,7 @@ export async function getGstr2bItems(importId: string): Promise<Gstr2bItem[]> {
     .from('gstr2b_items')
     .select('*')
     .eq('import_id', importId)
-    .eq('org_id', ctx.organisationId)
+    .eq('organisation_id', ctx.organisationId)
     .order('supplier_gstin');
   if (error) throw new Error(error.message);
   return (data ?? []) as Gstr2bItem[];
@@ -302,39 +303,49 @@ export async function importGstr2bJson(
   const b2bEntries: any[] = (jsonData as any)?.data?.docdata?.b2b ?? [];
   const items: Omit<Gstr2bItem, 'id' | 'import_id' | 'total_itc'>[] = [];
 
+  // GSTR-2B (GSTN format): data.docdata.b2b[].inv[].items[] with igst/cgst/sgst/cess per item.
+  // One row per INVOICE (item values summed) so it can be reconciled against purchase invoice totals.
+  const num = (v: unknown) => Number(v ?? 0) || 0;
   for (const supplier of b2bEntries) {
     const sgstin: string = supplier.ctin ?? '';
     const sname: string  = supplier.trdnm ?? '';
     for (const inv of (supplier.inv ?? [])) {
-      for (const item of (inv.items ?? [{}])) {
-        items.push({
-          org_id:            ctx.organisationId,
-          return_period:     returnPeriod,
-          supplier_gstin:    sgstin,
-          supplier_name:     sname,
-          invoice_number:    inv.inum ?? '',
-          invoice_date:      inv.dt   ?? new Date().toISOString().slice(0,10),
-          invoice_type:      'B2B',
-          place_of_supply:   inv.pos  ?? '',
-          irn:               inv.irn  ?? null,
-          taxable_value:     Number(item.txval ?? 0),
-          igst_amount:       Number(item.iamt  ?? 0),
-          cgst_amount:       Number(item.camt  ?? 0),
-          sgst_amount:       Number(item.samt  ?? 0),
-          cess_amount:       Number(item.csamt ?? 0),
-          itc_availability:  inv.itcavl === 'N' ? 'NO' : 'YES',
-          recon_status:      'UNMATCHED',
-          matched_invoice_id: null,
-          mismatch_notes:    null,
-        });
-      }
+      const lines: any[] = inv.items ?? inv.itms ?? [];  // eslint-disable-line @typescript-eslint/no-explicit-any
+      const sum = (...keys: string[]) =>
+        lines.reduce((a, l) => {
+          const src = l.itm_det ?? l;
+          for (const k of keys) if (src[k] !== undefined) return a + num(src[k]);
+          return a;
+        }, 0);
+      items.push({
+        tenant_id:         ctx.tenantId,
+        organisation_id:   ctx.organisationId,
+        return_period:     returnPeriod,
+        supplier_gstin:    sgstin,
+        supplier_name:     sname,
+        invoice_number:    inv.inum ?? '',
+        invoice_date:      inv.dt   ?? new Date().toISOString().slice(0,10),
+        invoice_type:      'B2B',
+        place_of_supply:   inv.pos  ?? '',
+        irn:               inv.irn  ?? null,
+        taxable_value:     sum('txval'),
+        igst_amount:       sum('igst', 'iamt'),
+        cgst_amount:       sum('cgst', 'camt'),
+        sgst_amount:       sum('sgst', 'samt'),
+        cess_amount:       sum('cess', 'csamt'),
+        itc_availability:  inv.itcavl === 'N' ? 'NO' : 'YES',
+        recon_status:      'UNMATCHED',
+        matched_invoice_id: null,
+        mismatch_notes:    null,
+      });
     }
   }
 
   const { data: importRow, error: impErr } = await supabase
     .from('gstr2b_imports')
     .insert({
-      org_id:          ctx.organisationId,
+      tenant_id:       ctx.tenantId,
+      organisation_id: ctx.organisationId,
       return_period:   returnPeriod,
       gstin,
       imported_by:     ctx.userId,
