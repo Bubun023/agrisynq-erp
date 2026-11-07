@@ -1,28 +1,27 @@
 import type { Metadata } from "next";
-import { RefreshCcw } from "lucide-react";
+import { redirect } from "next/navigation";
+import { getUserContext } from "@/actions/context";
+import { getFmsReconciliations } from "@/actions/fms";
+import FmsReconciliationClient from "./FmsReconciliationClient";
 
-export const metadata: Metadata = {
-  title: "FMS Reconciliation — FertiLedger ERP",
-};
+export const metadata: Metadata = { title: "FMS Reconciliation — FertiLedger ERP" };
+export const dynamic = "force-dynamic";
 
-export default function FmsReconciliationPage() {
+export default async function FmsReconciliationPage() {
+  try { await getUserContext(); } catch { redirect("/login"); }
+  const rows = await getFmsReconciliations();
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="page-header">
         <div>
           <h1 className="page-title">FMS Reconciliation</h1>
-          <p className="page-subtitle">Match ERP records with FMS portal data</p>
+          <p className="page-subtitle">
+            Compare FMS/iFMS portal totals with your posted farmer sales, and document how each variance was resolved
+          </p>
         </div>
       </div>
-      <div className="card p-8 flex flex-col items-center justify-center text-center min-h-[320px] gap-4">
-        <div className="p-4 rounded-2xl bg-surface-subtle">
-          <RefreshCcw className="w-8 h-8 text-ink-faint" strokeWidth={1.5} />
-        </div>
-        <div>
-          <p className="text-sm font-medium text-ink">Coming in Phase 8</p>
-          <p className="text-sm text-ink-muted mt-1 max-w-sm">View reconciliation results with matched, probable match, and unmatched entries. Exceptions are logged in the Exception Register. No auto-correction of invoices or stock.</p>
-        </div>
-      </div>
+      <FmsReconciliationClient initialRows={rows} />
     </div>
   );
 }

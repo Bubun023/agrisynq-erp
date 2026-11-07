@@ -149,6 +149,7 @@ export async function seedSystemAccounts() {
     { code: '1010', name: 'Sundry Debtors',          type: 'ASSET',     group: 'Current Assets',  ctrl: 'DEBTOR'   },
     { code: '1020', name: 'Stock in Hand',           type: 'ASSET',     group: 'Current Assets',  ctrl: 'STOCK'    },
     { code: '1030', name: 'Advance to Suppliers',    type: 'ASSET',     group: 'Current Assets',  ctrl: null       },
+    { code: '1040', name: 'Subsidy Receivable (Govt)', type: 'ASSET',  group: 'Current Assets',  ctrl: null       },
     { code: '1100', name: 'Fixed Assets',            type: 'ASSET',     group: 'Fixed Assets',    ctrl: null       },
     // Liabilities
     { code: '2001', name: 'Sundry Creditors',        type: 'LIABILITY', group: 'Current Liabilities', ctrl: 'CREDITOR' },

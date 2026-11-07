@@ -1,28 +1,27 @@
 import type { Metadata } from "next";
-import { ScrollText } from "lucide-react";
+import { redirect } from "next/navigation";
+import { getUserContext } from "@/actions/context";
+import { getFmsLedger } from "@/actions/fms";
+import FmsLedgerClient from "./FmsLedgerClient";
 
-export const metadata: Metadata = {
-  title: "FMS Ledger — FertiLedger ERP",
-};
+export const metadata: Metadata = { title: "FMS Ledger — FertiLedger ERP" };
+export const dynamic = "force-dynamic";
 
-export default function FmsLedgerPage() {
+export default async function FmsLedgerPage() {
+  try { await getUserContext(); } catch { redirect("/login"); }
+  const rows = await getFmsLedger();
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="page-header">
         <div>
           <h1 className="page-title">FMS Ledger</h1>
-          <p className="page-subtitle">Farmer sales filtered for FMS/iFMS portal reconciliation</p>
+          <p className="page-subtitle">
+            Farmer sales ready for FMS/iFMS portal reconciliation, with compliance checks and CSV export
+          </p>
         </div>
       </div>
-      <div className="card p-8 flex flex-col items-center justify-center text-center min-h-[320px] gap-4">
-        <div className="p-4 rounded-2xl bg-surface-subtle">
-          <ScrollText className="w-8 h-8 text-ink-faint" strokeWidth={1.5} />
-        </div>
-        <div>
-          <p className="text-sm font-medium text-ink">Coming in Phase 8</p>
-          <p className="text-sm text-ink-muted mt-1 max-w-sm">Government-portal-ready view of all FMS-linked farmer sales. Supports alias reference display for re-uploaded invoices and exports in reconciliation format.</p>
-        </div>
-      </div>
+      <FmsLedgerClient initialRows={rows} />
     </div>
   );
 }

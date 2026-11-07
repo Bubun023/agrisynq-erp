@@ -95,7 +95,10 @@ export async function createFarmerSale(_prev: FSFormState, formData: FormData): 
     const farmerPayable       = d.qty_sold * (d.selling_price_per_unit - d.subsidy_per_unit);
     const gstAmount           = (farmerPayable * d.gst_rate) / 100;
     const netAmount           = farmerPayable + gstAmount;
-    const creditAmount        = Math.max(0, netAmount - d.cash_received);
+    if (d.cash_received > Math.round(netAmount * 100) / 100 + 0.001) {
+      return { error: `Cash received (${d.cash_received}) cannot exceed the amount payable (${netAmount.toFixed(2)}).` };
+    }
+    const creditAmount        = Math.max(0, Math.round((netAmount - d.cash_received) * 100) / 100);
 
     const { data: numData } = await supabase.rpc("generate_fs_number", {
       p_tenant_id: ctx.tenantId, p_org_id: ctx.organisationId,
@@ -157,48 +160,20 @@ export async function createFarmerSale(_prev: FSFormState, formData: FormData): 
 }
 
 // ─── Post Farmer Sale ─────────────────────────────────────────
+// Atomic (migration 040): checks PoS/subsidy rules, stock and batch, writes the stock
+// movement, the sales + GST + subsidy-receivable + COGS journal, and marks it POSTED.
 export async function postFarmerSale(saleId: string): Promise<FSFormState> {
   try {
     const supabase = createClient();
     const ctx = await getUserContext();
 
-    const { data: fs, error: fetchErr } = await supabase.from("farmer_sales")
-      .select("id, sale_number, sale_date, status, product_id, batch_id, qty_sold, unit_of_measure, unit_price: selling_price_per_unit, gst_rate, gst_amount, sale_at_location, farmer_id, organisation_id")
-      .eq("id", saleId).eq("tenant_id", ctx.tenantId).single();
+    const { error } = await supabase.rpc("post_farmer_sale", { p_sale_id: saleId });
+    if (error) throw new Error(error.message);
 
-    if (fetchErr || !fs) throw new Error("Farmer sale not found.");
-    if (!["POS_PENDING", "POS_RECORDED"].includes(fs.status as string))
-      throw new Error("Only POS_PENDING or POS_RECORDED sales can be posted.");
-
-    // Post DELIVERY stock movement
-    const { error: ledgerErr } = await supabase.from("stock_ledger").insert([{
-      tenant_id:            ctx.tenantId,
-      organisation_id:      fs.organisation_id,
-      branch_id:            ctx.branchId,
-      movement_type:        "DELIVERY",
-      movement_date:        fs.sale_date,
-      product_id:           fs.product_id,
-      batch_id:             fs.batch_id ?? null,
-      from_location_id:     fs.sale_at_location,
-      party_id:             fs.farmer_id,
-      qty:                  -(fs.qty_sold as number),
-      unit_of_measure:      fs.unit_of_measure,
-      rate_per_unit:        fs.unit_price,
-      gst_rate:             fs.gst_rate,
-      gst_amount:           fs.gst_amount,
-      source_document_type: "FARMER_SALE",
-      source_document_id:   saleId,
-      source_document_no:   fs.sale_number,
-      narration:            `Farmer Sale — ${fs.sale_number}`,
-      created_by:           ctx.userId,
-    }]);
-    if (ledgerErr) throw new Error("Stock update failed: " + ledgerErr.message);
-
-    await supabase.from("farmer_sales").update({
-      status: "POSTED", posted_at: new Date().toISOString(), posted_by: ctx.userId,
-    }).eq("id", saleId).eq("tenant_id", ctx.tenantId);
-
-    revalidatePath("/sales/farmer-sales");
+    await writeAuditLog({ ctx, action: "POST", tableName: "farmer_sales", recordId: saleId,
+      newValues: { status: "POSTED" } });
+    revalidatePath("/sales/memo");
+    revalidatePath("/fms/ledger");
     revalidatePath("/inventory/ledger");
     return { success: true, saleId };
   } catch (err: unknown) {
