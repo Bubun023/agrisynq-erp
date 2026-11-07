@@ -6,9 +6,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useFormState, useFormStatus } from "react-dom";
 import { toast } from "sonner";
-import {
-  Plus, Search, X, Users, Pencil, Archive, Building2,
-} from "lucide-react";
+import { Plus, Search, X, Users, Pencil, Archive } from "lucide-react";
 import {
   addParty,
   updateParty,

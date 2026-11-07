@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useMemo } from "react";
-import { Sprout, Plus, X, ShieldAlert, CheckCircle, Trash2 } from "lucide-react";
+import { Sprout, Plus, X, ShieldAlert, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 import { createFarmerSale, postFarmerSale } from "@/actions/farmer-sales";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";

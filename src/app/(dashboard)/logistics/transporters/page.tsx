@@ -46,8 +46,8 @@ export default function TransportersPage() {
       setLoading(true);
       const data = await getTransporters();
       setTransporters(data as TransporterRow[]);
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to load transporters');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load transporters');
     } finally {
       setLoading(false);
     }

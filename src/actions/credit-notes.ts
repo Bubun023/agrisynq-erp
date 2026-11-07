@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getUserContext, writeAuditLog } from "./context";
-import { computeLine, sumLines, resolveInvoiceType, round2 } from "@/lib/gst";
+import { computeLine, sumLines, round2 } from "@/lib/gst";
 
 const CNLineSchema = z.object({
   product_id:     z.string().uuid(),

@@ -3,15 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import {
-  LayoutDashboard, Users, Package, Warehouse, FileCheck,
-  ShoppingCart, Truck, ReceiptText, FileText, ArrowLeftRight,
-  ClipboardList, BookOpen, CreditCard, Building2, PiggyBank,
-  BarChart3, ScrollText, RefreshCcw, Settings, Shield,
-  FileSearch, Leaf, ChevronDown, ChevronRight,
-  Sprout, Boxes, FilePlus2, Banknote, Calculator,
-  AlertCircle,
-} from "lucide-react";
+import { LayoutDashboard, Users, Package, Warehouse, FileCheck, ShoppingCart, Truck, ReceiptText, FileText, ArrowLeftRight, ClipboardList, BookOpen, CreditCard, Building2, PiggyBank, BarChart3, ScrollText, RefreshCcw, Settings, Shield, FileSearch, ChevronDown, ChevronRight, Sprout, Boxes, FilePlus2, Banknote, Calculator, AlertCircle } from "lucide-react";
 import { useState } from "react";
 
 // ─── Nav structure ─────────────────────────────────────────────────────────

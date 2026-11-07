@@ -268,7 +268,6 @@ function TaxProfileSlideOver({
 
 // ─── Main Client Component ─────────────────────────────────────
 export default function TaxProfilesClient({ initialData }: Props) {
-  const router = useRouter();
   const [search, setSearch] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [editItem, setEditItem] = useState<TaxProfile | null>(null);

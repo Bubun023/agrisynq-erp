@@ -123,7 +123,7 @@ export default function AccountsClient({ initialData }: { initialData: Account[]
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <BookOpen className="w-12 h-12 text-ink-faint mb-4" />
             <p className="text-ink-muted font-medium">No accounts found</p>
-            <p className="text-ink-faint text-sm mt-1">Click "Seed Defaults" to load the standard chart of accounts, or create manually.</p>
+            <p className="text-ink-faint text-sm mt-1">Click &quot;Seed Defaults&quot; to load the standard chart of accounts, or create manually.</p>
           </div>
         ) : (
           <table className="data-table">

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { createBankAccount, toggleBankAccountActive } from '@/actions/bank';
+import { createBankAccount } from '@/actions/bank';
 import type { BankAccount } from '@/actions/bank';
 
 type Props = { initialAccounts: BankAccount[] };
@@ -165,7 +165,7 @@ export default function BankAccountsClient({ initialAccounts }: Props) {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {accounts.length === 0 ? (
           <div className="col-span-3 bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400">
-            No bank accounts configured yet. Click "+ Add Bank Account" to get started.
+            No bank accounts configured yet. Click &quot;+ Add Bank Account&quot; to get started.
           </div>
         ) : (
           accounts.map(acc => (

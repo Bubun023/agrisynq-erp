@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, ChevronRight, Download } from "lucide-react";
+import { ChevronRight, Download } from "lucide-react";
 import type { GstSalesRow } from "@/actions/gst";
 
 interface Gstr1Data {

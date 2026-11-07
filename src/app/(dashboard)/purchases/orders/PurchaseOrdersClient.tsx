@@ -53,7 +53,7 @@ const STATUS_ACTIONS: Record<string, { label: string; next: "SENT" | "ACKNOWLEDG
 
 export default function PurchaseOrdersClient({ initialOrders }: { initialOrders: PO[] }) {
   const router = useRouter();
-  const [orders, setOrders]           = useState(initialOrders);
+  const [orders]                     = useState(initialOrders);
   const [search, setSearch]           = useState("");
   const [statusFilter, setStatus]     = useState("ALL");
   const [isOpen, setIsOpen]           = useState(false);

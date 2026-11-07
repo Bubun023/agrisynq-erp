@@ -5,8 +5,6 @@ import type { PLRow } from '@/actions/reports';
 
 type Props = { initialRows: PLRow[] };
 
-const MONTH_NAMES = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-IN', {

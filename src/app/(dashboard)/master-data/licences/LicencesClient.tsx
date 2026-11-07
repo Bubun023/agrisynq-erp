@@ -273,7 +273,6 @@ function LicenceSlideOver({
 
 // ─── Main Client Component ─────────────────────────────────────
 export default function LicencesClient({ initialData }: Props) {
-  const router = useRouter();
   const [search, setSearch] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [editItem, setEditItem] = useState<Licence | null>(null);

@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import { createClient } from "@/lib/supabase/server";
+import { getDashboardStats } from "@/actions/dashboard";
 import {
-  Package, Users, ReceiptText, AlertCircle,
-  TrendingUp, Boxes, FileCheck, RefreshCcw,
-  ArrowUpRight, Clock,
+  Package, ReceiptText, AlertCircle,
+  TrendingUp, Boxes, RefreshCcw,
+  ArrowUpRight, Clock, Banknote,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -69,32 +69,15 @@ function SectionHeader({ title, action }: { title: string; action?: string }) {
 }
 
 // ─── Dashboard Page ──────────────────────────────────────────────────────────
-export default async function DashboardPage() {
-  // TODO: Replace with real DB queries once Phase 2 is complete
-  const stats = {
-    todaySales:       0,
-    pendingDispatch:  0,
-    overdueAR:        0,
-    fmsExceptions:    0,
-    physicalStock:    0,
-    virtualStock:     0,
-    expiringBatches:  0,
-    activeLicences:   0,
-  };
+export const dynamic = "force-dynamic";
 
-  // True only when both Supabase values exist and are not placeholders
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-  const isConfigured =
-    supabaseUrl.startsWith("https://") &&
-    supabaseUrl.includes(".supabase.co") &&
-    !supabaseUrl.includes("xxxx") &&
-    supabaseKey.length > 40 &&
-    !supabaseKey.toLowerCase().includes("your");
+const num = (n: number) => new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(n);
+
+export default async function DashboardPage() {
+  const s = await getDashboardStats();
 
   return (
     <div className="max-w-7xl mx-auto">
-      {/* Page header */}
       <div className="page-header">
         <div>
           <h1 className="page-title">Dashboard</h1>
@@ -104,67 +87,84 @@ export default async function DashboardPage() {
         </div>
         <div className="flex items-center gap-2 text-xs text-ink-muted">
           <Clock className="w-3.5 h-3.5" />
-          <span>Live data</span>
+          <span>Live data · {s.currentPeriod}</span>
         </div>
       </div>
+
+      {s.failed.length > 0 && (
+        <div className="mb-4 border border-gold-200 bg-gold-50 rounded-lg px-4 py-3 text-sm text-gold-800 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>
+            Some figures could not be loaded ({s.failed.join(", ")}) and are shown as 0.
+            If this persists, check that all database migrations have been applied.
+          </span>
+        </div>
+      )}
 
       {/* ── Top KPI row ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatCard
           label="Today's Sales"
-          value={formatCurrency(stats.todaySales)}
-          sub="Tax invoices posted today"
+          value={formatCurrency(s.todaySales)}
+          sub={`${formatCurrency(s.salesThisMonth)} this month`}
           icon={ReceiptText}
           accent="leaf"
         />
         <StatCard
-          label="Pending Dispatch"
-          value={String(stats.pendingDispatch)}
-          sub="Invoiced but not yet dispatched"
-          icon={Boxes}
-          accent="gold"
-          alert={stats.pendingDispatch > 10}
-        />
-        <StatCard
           label="Overdue Receivables"
-          value={formatCurrency(stats.overdueAR)}
-          sub="Outstanding beyond credit days"
+          value={formatCurrency(s.overdueAR)}
+          sub={`${s.overdueARCount} invoice(s) past due date`}
           icon={TrendingUp}
           accent="danger"
-          alert={stats.overdueAR > 0}
+          alert={s.overdueAR > 0}
         />
         <StatCard
-          label="FMS Exceptions"
-          value={String(stats.fmsExceptions)}
-          sub="Unresolved reconciliation items"
-          icon={RefreshCcw}
-          accent={stats.fmsExceptions > 0 ? "danger" : "navy"}
-          alert={stats.fmsExceptions > 0}
+          label="Payables Overdue"
+          value={formatCurrency(s.payablesDue)}
+          sub="Supplier invoices past due date"
+          icon={Banknote}
+          accent="gold"
+          alert={s.payablesDue > 0}
+        />
+        <StatCard
+          label="Draft Invoices"
+          value={String(s.draftInvoices)}
+          sub="Sales invoices waiting to be posted"
+          icon={Boxes}
+          accent={s.draftInvoices > 0 ? "gold" : "navy"}
         />
       </div>
 
-      {/* ── Stock reconciliation row ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      {/* ── Stock row ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-6">
         <StatCard
-          label="Virtual / Accounting Stock"
-          value={`${stats.virtualStock} units`}
-          sub="Based on posted invoices"
+          label="Stock On Hand"
+          value={`${num(s.stockOnHandUnits)} units`}
+          sub="Across all locations (stock ledger)"
           icon={Package}
           accent="navy"
         />
         <StatCard
-          label="Physical Stock"
-          value={`${stats.physicalStock} units`}
-          sub="Based on gate passes & DCs"
+          label="Stock Value"
+          value={formatCurrency(s.stockValue)}
+          sub="Stock-in-Hand account at batch cost"
           icon={Boxes}
           accent="leaf"
         />
         <StatCard
           label="Expiring Batches (60 days)"
-          value={String(stats.expiringBatches)}
-          sub="Batches expiring within 60 days"
+          value={String(s.expiringBatches)}
+          sub={s.expiredWithStock > 0 ? `${s.expiredWithStock} already expired with stock` : "With stock on hand"}
           icon={AlertCircle}
-          accent={stats.expiringBatches > 0 ? "gold" : "navy"}
+          accent={s.expiringBatches > 0 || s.expiredWithStock > 0 ? "gold" : "navy"}
+          alert={s.expiredWithStock > 0}
+        />
+        <StatCard
+          label="Transfers In Transit"
+          value={String(s.transfersInTransit)}
+          sub="Dispatched, awaiting receipt"
+          icon={RefreshCcw}
+          accent="navy"
         />
       </div>
 
@@ -176,12 +176,12 @@ export default async function DashboardPage() {
           <SectionHeader title="Quick Actions" />
           <div className="grid grid-cols-2 gap-2">
             {[
-              { label: "New Tax Invoice",     href: "/sales/invoices/new",          accent: "leaf" },
-              { label: "New Purchase Order",  href: "/purchases/orders/new",         accent: "navy" },
-              { label: "Record Receipt",      href: "/accounting/receipts/new",      accent: "gold" },
-              { label: "Create Delivery Challan", href: "/sales/delivery-challans/new", accent: "navy" },
-              { label: "New Goods Receipt",   href: "/purchases/grn/new",            accent: "leaf" },
-              { label: "Import FMS Data",     href: "/fms/import",                   accent: "gold" },
+              { label: "Sales Invoices",      href: "/sales/invoices" },
+              { label: "Purchase Invoices",   href: "/purchases/invoices" },
+              { label: "Payment Receipts",    href: "/accounting/receipts" },
+              { label: "Purchase Orders",     href: "/purchases/orders" },
+              { label: "Stock Ledger",        href: "/inventory/ledger" },
+              { label: "Reports",             href: "/reports" },
             ].map((a) => (
               <a
                 key={a.href}
@@ -201,64 +201,51 @@ export default async function DashboardPage() {
           <div className="space-y-3">
             {[
               {
-                label: "GST Period",
-                status: "Open",
-                color: "badge-green",
-                detail: "July 2025 — GSTR-1 due 11 Aug",
+                label: "Accounting Period",
+                status: s.currentPeriodLocked ? "Locked" : "Open",
+                color: s.currentPeriodLocked ? "badge-gold" : "badge-green",
+                detail: `${s.currentPeriod}${s.currentPeriodLocked ? " is locked — no new postings" : ""}`,
+                href: "/admin/periods",
               },
               {
                 label: "FMS Reconciliation",
-                status: "Pending",
-                color: "badge-gold",
-                detail: "2 unresolved exceptions",
+                status: s.fmsPending > 0 ? `${s.fmsPending} Pending` : "Clear",
+                color: s.fmsPending > 0 ? "badge-gold" : "badge-green",
+                detail: s.fmsPending > 0 ? "Reconciliations with variance or awaiting review" : "No unresolved reconciliations",
+                href: "/fms/reconciliation",
               },
               {
                 label: "Licences",
-                status: `${stats.activeLicences} Active`,
-                color: "badge-green",
-                detail: "No licences expiring within 30 days",
+                status: `${s.activeLicences} Active`,
+                color: s.licencesExpiring30 > 0 ? "badge-gold" : "badge-green",
+                detail: s.licencesExpiring30 > 0
+                  ? `${s.licencesExpiring30} expiring within 30 days`
+                  : "None expiring within 30 days",
+                href: "/master-data/licences",
               },
               {
                 label: "Bank Reconciliation",
-                status: "Not Started",
-                color: "badge-gray",
-                detail: "July 2025 statement not imported",
+                status: s.unmatchedBankLines > 0 ? `${s.unmatchedBankLines} Unmatched` : "Up to date",
+                color: s.unmatchedBankLines > 0 ? "badge-gold" : "badge-green",
+                detail: s.unmatchedBankLines > 0 ? "Statement lines not yet matched to books" : "No unmatched statement lines",
+                href: "/bank/reconciliation",
               },
             ].map((item) => (
-              <div
+              <a
                 key={item.label}
-                className="flex items-start justify-between gap-4 py-2 border-b border-surface-border last:border-b-0"
+                href={item.href}
+                className="flex items-start justify-between gap-4 py-2 border-b border-surface-border last:border-b-0 hover:bg-surface-subtle -mx-2 px-2 rounded"
               >
                 <div>
                   <div className="text-sm font-medium text-ink">{item.label}</div>
                   <div className="text-xs text-ink-muted mt-0.5">{item.detail}</div>
                 </div>
                 <span className={`badge ${item.color} shrink-0`}>{item.status}</span>
-              </div>
+              </a>
             ))}
           </div>
         </div>
       </div>
-
-      {/* Setup notice — shown only until Supabase values are filled in */}
-      {!isConfigured && (
-        <div className="mt-6 border border-gold-200 bg-gold-50 rounded-lg px-5 py-4 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-gold-600 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-gold-800">
-              Supabase not yet configured
-            </p>
-            <p className="text-sm text-gold-700 mt-0.5">
-              Update <code className="font-mono text-xs bg-gold-100 px-1 py-0.5 rounded">.env.local</code> with your{" "}
-              <strong>NEXT_PUBLIC_SUPABASE_URL</strong> and{" "}
-              <strong>NEXT_PUBLIC_SUPABASE_ANON_KEY</strong>, then run the
-              migration SQL files in{" "}
-              <code className="font-mono text-xs bg-gold-100 px-1 py-0.5 rounded">supabase/migrations/</code>{" "}
-              against your Supabase project to activate all features.
-            </p>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -141,7 +141,7 @@ export default function Gstr2bClient({ initialImports }: Props) {
         {imports.length === 0 ? (
           <div className="py-14 text-center text-ink-muted">
             <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
-            <p>No imports yet. Click "Import GSTR-2B JSON" to begin.</p>
+            <p>No imports yet. Click &quot;Import GSTR-2B JSON&quot; to begin.</p>
           </div>
         ) : (
           <table className="data-table">

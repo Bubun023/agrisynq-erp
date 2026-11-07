@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Plus, X, Package, AlertTriangle, Loader2, Clock } from "lucide-react";
+import { Search, Plus, X, Package, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { addBatch, quarantineBatch } from "@/actions/batches";
 import { formatDate, daysUntil } from "@/lib/utils";

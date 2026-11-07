@@ -138,7 +138,7 @@ export default function QuotationsClient({
 }: {
   initialQuotations: Quotation[];
 }) {
-  const [quotations, setQuotations] = useState<Quotation[]>(initialQuotations);
+  const [quotations] = useState<Quotation[]>(initialQuotations);
   const [activeFilter, setActiveFilter] = useState<QuotationStatus | "ALL">("ALL");
   const [search, setSearch] = useState("");
   const [slideOpen, setSlideOpen] = useState(false);
