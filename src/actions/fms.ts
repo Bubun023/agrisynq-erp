@@ -7,7 +7,7 @@ import { getUserContext, writeAuditLog } from "./context";
 
 // ─── Types ────────────────────────────────────────────────────
 
-export type ComplianceFlag = "OK" | "MISSING_POS" | "POS_PENDING" | "NO_DEALER_ID";
+export type ComplianceFlag = "OK" | "MISSING_POS" | "POS_PENDING" | "NO_DEALER_ID" | "CANCELLED";
 
 export interface FmsLedgerRow {
   id: string;
@@ -37,6 +37,12 @@ export interface FmsLedgerRow {
   fms_acknowledgement_no: string | null;
   status: string;
   compliance_flag: ComplianceFlag;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  reissued_from_id: string | null;
+  reissued_as_id: string | null;
+  reissued_as_number: string | null;
+  reissued_from_number: string | null;
 }
 
 export interface FmsReconciliationRow {
@@ -161,4 +167,84 @@ export async function resolveFmsReconciliation(id: string, remarks: string) {
   await writeAuditLog({ ctx, action: "FMS_RESOLVE", tableName: "fms_reconciliation", recordId: id, reason: remarks });
   revalidatePath("/fms/reconciliation");
   return { success: true, data: data as FmsReconciliationRow };
+}
+
+// ─── Cancel & Reissue ─────────────────────────────────────────
+
+/** Sales that can still be cancelled (not yet cancelled, subsidy not yet claimed). */
+export async function getCancellableFarmerSales(): Promise<FmsLedgerRow[]> {
+  const supabase = createClient();
+  const ctx = await getUserContext();
+  const { data, error } = await supabase
+    .from("vw_fms_ledger")
+    .select("*")
+    .eq("organisation_id", ctx.organisationId)
+    .in("status", ["POS_PENDING", "POS_RECORDED", "POSTED"])
+    .order("sale_date", { ascending: false })
+    .limit(500);
+  if (error) throw new Error(`Cancellable sales error: ${error.message}`);
+  return (data ?? []) as FmsLedgerRow[];
+}
+
+export async function getCancelledFarmerSales(): Promise<FmsLedgerRow[]> {
+  const supabase = createClient();
+  const ctx = await getUserContext();
+  const { data, error } = await supabase
+    .from("vw_fms_ledger")
+    .select("*")
+    .eq("organisation_id", ctx.organisationId)
+    .eq("status", "CANCELLED")
+    .order("cancelled_at", { ascending: false })
+    .limit(200);
+  if (error) throw new Error(`Cancelled sales error: ${error.message}`);
+  return (data ?? []) as FmsLedgerRow[];
+}
+
+export async function cancelFarmerSale(saleId: string, reason: string) {
+  const supabase = createClient();
+  const ctx = await getUserContext();
+  const { error } = await supabase.rpc("cancel_farmer_sale", { p_sale_id: saleId, p_reason: reason });
+  if (error) return { success: false, error: error.message };
+
+  await writeAuditLog({ ctx, action: "FMS_CANCEL", tableName: "farmer_sales", recordId: saleId, reason });
+  revalidatePath("/fms/reissue");
+  revalidatePath("/fms/ledger");
+  revalidatePath("/inventory/ledger");
+  return { success: true };
+}
+
+const ReissueSchema = z.object({
+  saleId:        z.string().uuid(),
+  reason:        z.string().trim().min(3, "Enter the reason for cancelling").max(500),
+  newPosId:      z.string().trim().min(1, "A new PoS transaction ID is required").max(100),
+  qty:           z.number().positive("Quantity must be greater than 0").optional(),
+  sellingPrice:  z.number().min(0).optional(),
+  subsidyPerUnit:z.number().min(0).optional(),
+});
+export type ReissueInput = z.infer<typeof ReissueSchema>;
+
+export async function reissueFarmerSale(input: ReissueInput) {
+  const parsed = ReissueSchema.safeParse(input);
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const d = parsed.data;
+
+  const supabase = createClient();
+  const ctx = await getUserContext();
+  const { data, error } = await supabase.rpc("reissue_farmer_sale", {
+    p_sale_id:          d.saleId,
+    p_reason:           d.reason,
+    p_new_pos_id:       d.newPosId,
+    p_qty:              d.qty ?? null,
+    p_selling_price:    d.sellingPrice ?? null,
+    p_subsidy_per_unit: d.subsidyPerUnit ?? null,
+  });
+  if (error) return { success: false, error: error.message };
+
+  const row = data as { id: string; sale_number: string };
+  await writeAuditLog({ ctx, action: "FMS_REISSUE", tableName: "farmer_sales", recordId: d.saleId, reason: d.reason,
+    newValues: { reissued_as: row.sale_number, new_pos_id: d.newPosId } });
+  revalidatePath("/fms/reissue");
+  revalidatePath("/fms/ledger");
+  revalidatePath("/inventory/ledger");
+  return { success: true, newSaleNumber: row.sale_number };
 }

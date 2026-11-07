@@ -1,28 +1,25 @@
 import type { Metadata } from "next";
-import { AlertCircle } from "lucide-react";
+import { redirect } from "next/navigation";
+import { getUserContext } from "@/actions/context";
+import { getCancellableFarmerSales, getCancelledFarmerSales } from "@/actions/fms";
+import FmsReissueClient from "./FmsReissueClient";
 
-export const metadata: Metadata = {
-  title: "Cancel & Reissue — FertiLedger ERP",
-};
+export const metadata: Metadata = { title: "Cancel & Reissue — FertiLedger ERP" };
+export const dynamic = "force-dynamic";
 
-export default function FmsReissuePage() {
+export default async function FmsReissuePage() {
+  try { await getUserContext(); } catch { redirect("/login"); }
+  const [sales, cancelled] = await Promise.all([getCancellableFarmerSales(), getCancelledFarmerSales()]);
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="page-header">
         <div>
           <h1 className="page-title">Cancel &amp; Reissue</h1>
-          <p className="page-subtitle">Expired subsidy cancellation and fresh reissue workflow</p>
+          <p className="page-subtitle">Correct a wrong farmer sale: reverse it properly and reissue it under a new PoS transaction ID</p>
         </div>
       </div>
-      <div className="card p-8 flex flex-col items-center justify-center text-center min-h-[320px] gap-4">
-        <div className="p-4 rounded-2xl bg-surface-subtle">
-          <AlertCircle className="w-8 h-8 text-ink-faint" strokeWidth={1.5} />
-        </div>
-        <div>
-          <p className="text-sm font-medium text-ink">Coming in Phase 8</p>
-          <p className="text-sm text-ink-muted mt-1 max-w-sm">Maker-checker workflow for cancelling expired FMS subsidies and creating linked replacement transactions. Permanent audit trail maintained between old and new references.</p>
-        </div>
-      </div>
+      <FmsReissueClient sales={sales} cancelled={cancelled} />
     </div>
   );
 }

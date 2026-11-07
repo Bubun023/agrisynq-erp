@@ -10,12 +10,14 @@ const FLAG_LABEL: Record<ComplianceFlag, string> = {
   MISSING_POS: "Missing PoS ID",
   POS_PENDING: "PoS pending",
   NO_DEALER_ID: "No dealer ID",
+  CANCELLED: "Cancelled",
 };
 const FLAG_BADGE: Record<ComplianceFlag, string> = {
   OK: "badge-success",
   MISSING_POS: "badge-danger",
   POS_PENDING: "badge-warning",
   NO_DEALER_ID: "badge-warning",
+  CANCELLED: "badge-gray",
 };
 const SUBSIDY_LABEL: Record<string, string> = {
   NEEM_COATED_UREA: "Neem-coated urea",
@@ -74,14 +76,15 @@ export default function FmsLedgerClient({ initialRows }: { initialRows: FmsLedge
     );
   }, [initialRows, search, flag, subsidy, from, to]);
 
-  const totalQty = rows.reduce((s, r) => s + Number(r.qty_sold), 0);
-  const totalSubsidy = rows.reduce((s, r) => s + Number(r.total_subsidy_amount), 0);
-  const issues = rows.filter((r) => r.compliance_flag !== "OK").length;
+  const live = rows.filter((r) => r.compliance_flag !== "CANCELLED");   // cancelled sales are shown but not counted
+  const totalQty = live.reduce((s, r) => s + Number(r.qty_sold), 0);
+  const totalSubsidy = live.reduce((s, r) => s + Number(r.total_subsidy_amount), 0);
+  const issues = live.filter((r) => r.compliance_flag !== "OK").length;
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="stat-card"><p className="stat-label">Transactions</p><p className="stat-value">{rows.length}</p></div>
+        <div className="stat-card"><p className="stat-label">Transactions</p><p className="stat-value">{live.length}</p></div>
         <div className="stat-card"><p className="stat-label">Quantity sold</p><p className="stat-value">{totalQty.toLocaleString("en-IN", { maximumFractionDigits: 3 })}</p></div>
         <div className="stat-card"><p className="stat-label">Subsidy</p><p className="stat-value">{formatCurrency(totalSubsidy)}</p></div>
         <div className="stat-card">
@@ -129,7 +132,7 @@ export default function FmsLedgerClient({ initialRows }: { initialRows: FmsLedge
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className={cn(r.compliance_flag === "MISSING_POS" && "bg-red-50/50")}>
+                <tr key={r.id} className={cn(r.compliance_flag === "MISSING_POS" && "bg-red-50/50", r.compliance_flag === "CANCELLED" && "opacity-60")}>
                   <td><span className="font-mono text-sm text-leaf-700">{r.sale_number}</span></td>
                   <td className="text-sm">{formatDate(r.sale_date)}</td>
                   <td>

@@ -156,10 +156,73 @@ SELECT t_eq('variance resolved', (SELECT COUNT(*) FROM fms_reconciliation WHERE 
 SELECT t_fails('cannot resolve a matched reconciliation twice',
   $$SELECT resolve_fms_reconciliation((SELECT id FROM fms_reconciliation WHERE reconciliation_status = 'RESOLVED'), 'again')$$, 'not awaiting');
 
+-- 3b. CANCEL & REISSUE ------------------------------------------------------------------------
+SELECT t_fails('cancel needs a reason', $$SELECT cancel_farmer_sale('00000000-0000-0000-0000-00000000f1a1', '  ')$$, 'reason is required');
+SELECT t_fails('reissue must use a NEW PoS id',
+  $$SELECT reissue_farmer_sale('00000000-0000-0000-0000-00000000f1a1', 'wrong qty', ' pos-0001')$$, 'must differ');
+SELECT t_fails('reissue needs a PoS id', $$SELECT reissue_farmer_sale('00000000-0000-0000-0000-00000000f1a1', 'wrong qty', '')$$, 'new PoS transaction ID is required');
+SELECT t_fails('reissue rejects subsidy above price',
+  $$SELECT reissue_farmer_sale('00000000-0000-0000-0000-00000000f1a1', 'x', 'POS-BAD', 8, 20, 25)$$, 'subsidy per unit');
+SELECT t_eq('failed reissue attempts changed nothing', (SELECT COUNT(*) FROM farmer_sales WHERE status = 'CANCELLED'), 0);
+
+-- cancel & reissue the POSTED sale with a corrected quantity (8 instead of 10)
+SELECT reissue_farmer_sale('00000000-0000-0000-0000-00000000f1a1', 'Wrong quantity keyed at PoS', 'POS-0002', 8, 20, 15);
+SELECT t_eq('original is CANCELLED', (SELECT (status = 'CANCELLED')::int FROM farmer_sales WHERE sale_number = 'FS-T-1'), 1);
+SELECT t_eq('original linked to replacement', (SELECT (reissued_as_id IS NOT NULL)::int FROM farmer_sales WHERE sale_number = 'FS-T-1'), 1);
+SELECT t_eq('replacement is POS_RECORDED with new PoS id',
+  (SELECT COUNT(*) FROM farmer_sales WHERE pos_transaction_id = 'POS-0002' AND status = 'POS_RECORDED' AND reissued_from_id IS NOT NULL), 1);
+SELECT t_eq('replacement amounts recomputed (8 x 20 = 160 gross)', (SELECT gross_amount FROM farmer_sales WHERE pos_transaction_id = 'POS-0002'), 160);
+SELECT t_eq('replacement subsidy recomputed (8 x 15)', (SELECT total_subsidy_amount FROM farmer_sales WHERE pos_transaction_id = 'POS-0002'), 120);
+SELECT t_eq('replacement net (40 + 5% GST = 42)', (SELECT net_amount FROM farmer_sales WHERE pos_transaction_id = 'POS-0002'), 42);
+SELECT t_eq('stock fully restored by the reversal', (SELECT SUM(balance_qty) FROM stock_balance), 100);
+SELECT t_eq('batch qty restored', (SELECT current_qty FROM batch_register WHERE batch_number = 'NU-001'), 100);
+SELECT t_eq('subsidy receivable reversed to nil',
+  (SELECT period_debit - period_credit FROM vw_trial_balance WHERE account_code = '1040'), 0);
+SELECT t_eq('sales revenue reversed to nil',
+  (SELECT period_credit - period_debit FROM vw_trial_balance WHERE account_code = '3001'), 0);
+SELECT t_eq('COGS reversed to nil', (SELECT period_debit - period_credit FROM vw_trial_balance WHERE account_code = '4001'), 0);
+SELECT t_eq('books still balance after reversal', (SELECT SUM(period_debit) - SUM(period_credit) FROM vw_trial_balance), 0);
+SELECT t_eq('ledger flags the cancelled sale', (SELECT COUNT(*) FROM vw_fms_ledger WHERE sale_number = 'FS-T-1' AND compliance_flag = 'CANCELLED'), 1);
+SELECT t_fails('cancelling twice rejected', $$SELECT cancel_farmer_sale('00000000-0000-0000-0000-00000000f1a1', 'again')$$, 'already cancelled');
+-- the cancelled sale's PoS id stays burned
+SELECT t_fails('old PoS id can never be reused', $$
+  INSERT INTO farmer_sales(tenant_id, organisation_id, sale_number, sale_date, farmer_id, farmer_name, sale_at_location,
+     product_id, hsn_code, qty_sold, unit_of_measure, selling_price_per_unit, subsidy_type, pos_transaction_id, status)
+  VALUES ('00000000-0000-0000-0000-00000000f001','00000000-0000-0000-0000-00000000f003','FS-T-REUSE', CURRENT_DATE,
+     '00000000-0000-0000-0000-00000000f0f1','Ram Kumar','00000000-0000-0000-0000-00000000f0c1',
+     '00000000-0000-0000-0000-00000000f0d1','3102', 1, 'BAG', 20, 'NEEM_COATED_UREA', 'POS-0001', 'POS_RECORDED')$$, 'uq_fs_pos_tx_norm');
+
+-- the replacement goes through the normal posting checks and posts correctly
+SELECT post_farmer_sale((SELECT id FROM farmer_sales WHERE pos_transaction_id = 'POS-0002'));
+SELECT t_eq('stock after posting replacement (100 - 8)', (SELECT SUM(balance_qty) FROM stock_balance), 92);
+SELECT t_eq('replacement DR subsidy receivable 120',
+  (SELECT t_jv(id, '1040', 'dr') FROM farmer_sales WHERE pos_transaction_id = 'POS-0002'), 120);
+
+-- once subsidy is claimed the sale can no longer be cancelled from here
+RESET ROLE;
+UPDATE farmer_sales SET status = 'SUBSIDY_CLAIMED' WHERE pos_transaction_id = 'POS-0002';
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', :U, false);
+SELECT t_fails('claimed subsidy blocks cancellation',
+  $$SELECT cancel_farmer_sale((SELECT id FROM farmer_sales WHERE pos_transaction_id = 'POS-0002'), 'try')$$, 'already subsidy claimed');
+RESET ROLE;
+UPDATE farmer_sales SET status = 'POSTED' WHERE pos_transaction_id = 'POS-0002';
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', :U, false);
+
+-- a pre-posting sale can be cancelled with no accounting effect
+SELECT cancel_farmer_sale('00000000-0000-0000-0000-00000000f1a2', 'Customer changed mind');
+SELECT t_eq('pre-posting cancel just marks CANCELLED', (SELECT (status = 'CANCELLED')::int FROM farmer_sales WHERE sale_number = 'FS-T-2'), 1);
+SELECT t_eq('no journal for a cancelled unposted sale',
+  (SELECT COUNT(*) FROM journal_vouchers WHERE reference_id = '00000000-0000-0000-0000-00000000f1a2'), 0);
+SELECT t_eq('stock untouched by unposted cancel', (SELECT SUM(balance_qty) FROM stock_balance), 92);
+
 -- 4. TENANT ISOLATION ------------------------------------------------------------------------
 SELECT set_config('request.jwt.claim.sub', :U2, false);
 SELECT t_eq('other tenant sees no FMS ledger', (SELECT COUNT(*) FROM vw_fms_ledger), 0);
 SELECT t_fails('cross-tenant posting blocked', $$SELECT post_farmer_sale('00000000-0000-0000-0000-00000000f1a2')$$, 'not found');
+SELECT t_fails('cross-tenant cancel blocked', $$SELECT cancel_farmer_sale('00000000-0000-0000-0000-00000000f1a1', 'hack')$$, 'not found');
+SELECT t_fails('cross-tenant reissue blocked', $$SELECT reissue_farmer_sale('00000000-0000-0000-0000-00000000f1a1', 'hack', 'POS-X')$$, 'not found');
 
 RESET ROLE;
 DROP FUNCTION public.t_eq(text,numeric,numeric), public.t_jv(uuid,text,text), public.t_fails(text,text,text);
