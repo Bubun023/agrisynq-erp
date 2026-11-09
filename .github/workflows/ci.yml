@@ -1,0 +1,60 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Types, lint, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run type-check
+      - run: npm run lint
+      - run: npm test
+
+  database:
+    name: Database tests (all migrations + SQL e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash supabase/tests/run_db_tests.sh
+
+  integration:
+    name: Local stack, page smoke, action integration tests
+    runs-on: ubuntu-latest
+    needs: [static]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Start the Supabase-compatible stack and seed it
+        run: |
+          bash supabase/local/stack.sh up
+          bash supabase/local/stack.sh seed
+      - name: Action-level integration tests
+        run: npm run test:int
+      - name: Build and smoke-test every page
+        run: |
+          set -a; . ./.env.development.local; set +a   # next build/start do not read .env.development.local
+          npm run build
+          npx next start -p 3000 > next.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/login && break; sleep 2; done
+          node scripts/smoke-pages.mjs --base http://localhost:3000
+      - name: Show server log on failure
+        if: failure()
+        run: tail -n 100 next.log || true
