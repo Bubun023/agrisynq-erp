@@ -270,28 +270,62 @@ export async function dispatchStockTransfer(transferId: string) {
   await writeAuditLog({ ctx, action: "DISPATCH", tableName: "stock_transfers", recordId: transferId, newValues: { status: "IN_TRANSIT" } });
 
   revalidatePath('/logistics/transfers');
+  revalidatePath('/cf-management/withdrawals');
+  revalidatePath('/cf-management/stock');
   revalidatePath('/inventory/ledger');
   revalidatePath('/inventory/batches');
   return { success: true };
 }
 
-export async function receiveStockTransfer(transferId: string) {
+export type ReceiptLineInput = { itemId: string; received: number; damaged: number };
+
+/**
+ * Receive an IN_TRANSIT transfer. Without `lines` everything is taken in intact; with `lines`
+ * each item records received / damaged quantities and the remainder is booked as shortage.
+ * Damaged + short stock is written off at cost to Transit Loss (migration 044).
+ */
+export async function receiveStockTransfer(transferId: string, lines?: ReceiptLineInput[], remarks?: string) {
   const supabase = createClient();
   const ctx = await getUserContext();
 
-  const { error } = await supabase.rpc('rpc_receive_stock_transfer', {
-    p_tenant_id: ctx.tenantId,
+  const items = lines
+    ? lines.map((l) => ({ item_id: l.itemId, received: l.received, damaged: l.damaged }))
+    : null;
+
+  const { error } = await supabase.rpc('receive_stock_transfer', {
     p_transfer_id: transferId,
-    p_user_id: ctx.userId,
+    p_items: items,
+    p_remarks: remarks?.trim() || null,
   });
 
   if (error) return { success: false, error: error.message };
 
-  await writeAuditLog({ ctx, action: "RECEIVE", tableName: "stock_transfers", recordId: transferId, newValues: { status: "RECEIVED" } });
+  await writeAuditLog({ ctx, action: "RECEIVE", tableName: "stock_transfers", recordId: transferId,
+    newValues: { status: "RECEIVED", lines: lines?.length ?? 0 } });
 
   revalidatePath('/logistics/transfers');
+  revalidatePath('/cf-management/withdrawals');
+  revalidatePath('/cf-management/stock');
   revalidatePath('/inventory/ledger');
   revalidatePath('/inventory/batches');
+  return { success: true };
+}
+
+/** DRAFT -> APPROVED. C&F withdrawals need the company's approval reference. */
+export async function approveStockTransfer(transferId: string, approvalRef?: string) {
+  const supabase = createClient();
+  const ctx = await getUserContext();
+
+  const { error } = await supabase.rpc('approve_stock_transfer', {
+    p_transfer_id: transferId,
+    p_approval_ref: approvalRef?.trim() || null,
+  });
+  if (error) return { success: false, error: error.message };
+
+  await writeAuditLog({ ctx, action: "APPROVE", tableName: "stock_transfers", recordId: transferId,
+    newValues: { status: "APPROVED", approval_ref: approvalRef ?? null } });
+  revalidatePath('/logistics/transfers');
+  revalidatePath('/cf-management/withdrawals');
   return { success: true };
 }
 

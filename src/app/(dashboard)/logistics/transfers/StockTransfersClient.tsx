@@ -11,8 +11,8 @@ import {
 import {
   createStockTransfer,
   dispatchStockTransfer,
-  receiveStockTransfer,
 } from '@/actions/logistics';
+import { ApproveTransferDialog, ReceiveTransferDialog } from '@/components/logistics/TransferDialogs';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 type TransferItem = {
@@ -33,7 +33,9 @@ type Transfer = {
   transfer_no: string;
   transfer_date: string;
   transfer_type: string;
-  status: 'DRAFT' | 'IN_TRANSIT' | 'RECEIVED' | 'CANCELLED';
+  status: 'DRAFT' | 'APPROVED' | 'IN_TRANSIT' | 'RECEIVED' | 'CANCELLED';
+  cnf_withdrawal_req_no?: string | null;
+  cnf_company_approval_ref?: string | null;
   source_location_id: string;
   destination_location_id: string;
   vehicle_no: string | null;
@@ -66,19 +68,21 @@ const TRANSFER_TYPES = [
   { value: 'DAMAGE_TRANSFER', label: 'Damage Transfer' },
 ];
 
-const STATUS_FILTERS = ['ALL', 'DRAFT', 'IN_TRANSIT', 'RECEIVED', 'CANCELLED'] as const;
+const STATUS_FILTERS = ['ALL', 'DRAFT', 'APPROVED', 'IN_TRANSIT', 'RECEIVED', 'CANCELLED'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: Transfer['status'] }) {
   const map: Record<Transfer['status'], string> = {
     DRAFT: 'badge badge-warning',
+    APPROVED: 'badge badge-info',
     IN_TRANSIT: 'badge badge-info',
     RECEIVED: 'badge badge-success',
     CANCELLED: 'badge badge-danger',
   };
   const labels: Record<Transfer['status'], string> = {
     DRAFT: 'Draft',
+    APPROVED: 'Approved',
     IN_TRANSIT: 'In Transit',
     RECEIVED: 'Received',
     CANCELLED: 'Cancelled',
@@ -102,6 +106,8 @@ export default function StockTransfersClient({
   const [search, setSearch] = useState('');
   const [showSlide, setShowSlide] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [approving, setApproving] = useState<Transfer | null>(null);
+  const [receiving, setReceiving] = useState<Transfer | null>(null);
   const [isPending, startTransition] = useTransition();
 
   // ─── Filter ────────────────────────────────────────────────────────────────
@@ -133,21 +139,8 @@ export default function StockTransfersClient({
     });
   }
 
-  // ─── Receive ───────────────────────────────────────────────────────────────
-  function handleReceive(id: string, transferNo: string) {
-    if (!confirm(`Confirm receipt of transfer ${transferNo}? This will move stock IN at the destination.`)) return;
-    startTransition(async () => {
-      const res = await receiveStockTransfer(id);
-      if (res.success) {
-        toast.success(`Transfer ${transferNo} received. Stock IN recorded.`);
-        setTransfers((prev) =>
-          prev.map((t) => (t.id === id ? { ...t, status: 'RECEIVED' } : t))
-        );
-      } else {
-        toast.error(res.error ?? 'Failed to receive');
-      }
-    });
-  }
+  // ─── Receive (dialog records received / damaged per line) ──────────────────
+  const isCnf = (t: Transfer) => t.transfer_type === 'CNF_TO_OWN_WAREHOUSE' || t.transfer_type === 'CNF_DIRECT_TO_CUSTOMER';
 
   return (
     <div className="space-y-6">
@@ -270,7 +263,16 @@ export default function StockTransfersClient({
                     <td><StatusBadge status={t.status} /></td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-2">
-                        {t.status === 'DRAFT' && (
+                        {t.status === 'DRAFT' && isCnf(t) && (
+                          <button
+                            onClick={() => setApproving(t)}
+                            disabled={isPending}
+                            className="btn-sm bg-navy-700 hover:bg-navy-800 text-white font-semibold"
+                          >
+                            Approve
+                          </button>
+                        )}
+                        {((t.status === 'DRAFT' && !isCnf(t)) || t.status === 'APPROVED') && (
                           <button
                             onClick={() => handleDispatch(t.id, t.transfer_no)}
                             disabled={isPending}
@@ -281,7 +283,7 @@ export default function StockTransfersClient({
                         )}
                         {t.status === 'IN_TRANSIT' && (
                           <button
-                            onClick={() => handleReceive(t.id, t.transfer_no)}
+                            onClick={() => setReceiving(t)}
                             disabled={isPending}
                             className="btn-sm bg-leaf-600 hover:bg-leaf-700 text-white font-semibold"
                           >
@@ -362,6 +364,21 @@ export default function StockTransfersClient({
       </div>
 
       {/* New Transfer Slide-Over */}
+      {approving && (
+        <ApproveTransferDialog
+          transfer={approving}
+          onClose={() => setApproving(null)}
+          onDone={() => { setTransfers((p) => p.map((x) => (x.id === approving.id ? { ...x, status: 'APPROVED' } : x))); setApproving(null); }}
+        />
+      )}
+      {receiving && (
+        <ReceiveTransferDialog
+          transfer={receiving}
+          onClose={() => setReceiving(null)}
+          onDone={() => { setTransfers((p) => p.map((x) => (x.id === receiving.id ? { ...x, status: 'RECEIVED' } : x))); setReceiving(null); }}
+        />
+      )}
+
       {showSlide && (
         <NewTransferSlideOver
           onClose={() => setShowSlide(false)}

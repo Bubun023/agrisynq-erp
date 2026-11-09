@@ -172,6 +172,7 @@ export async function seedSystemAccounts() {
     { code: '4010', name: 'Freight & Transport',     type: 'EXPENSE',   group: 'Direct Expenses',  ctrl: null      },
     { code: '4020', name: 'Salaries & Wages',        type: 'EXPENSE',   group: 'Indirect Expenses',ctrl: null      },
     { code: '4030', name: 'Rent & Rates',            type: 'EXPENSE',   group: 'Indirect Expenses',ctrl: null      },
+    { code: '4050', name: 'Transit Loss / Stock Shortage', type: 'EXPENSE', group: 'Indirect Expenses', ctrl: null },
     { code: '4040', name: 'GST Input Credit (CGST)', type: 'ASSET',     group: 'Tax Assets',       ctrl: 'TAX'     },
     { code: '4041', name: 'GST Input Credit (SGST)', type: 'ASSET',     group: 'Tax Assets',       ctrl: 'TAX'     },
     { code: '4042', name: 'GST Input Credit (IGST)', type: 'ASSET',     group: 'Tax Assets',       ctrl: 'TAX'     },
