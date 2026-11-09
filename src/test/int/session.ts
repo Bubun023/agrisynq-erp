@@ -21,9 +21,13 @@ export const SERVICE_KEY = env.SUPABASE_SECRET_KEY;
 export const PASSWORD = "Passw0rd#Local";
 
 export const USERS = {
-  admin: "admin@fertiledger.test",
-  accountant: "accountant@fertiledger.test",
-  viewer: "viewer@fertiledger.test",
+  admin: "admin@fertiledger.test",           // SUPER_ADMIN
+  branch: "branch@fertiledger.test",         // BRANCH_ADMIN
+  accountant: "accountant@fertiledger.test", // ACCOUNTANT
+  sales: "sales@fertiledger.test",           // SALES_MANAGER
+  stock: "stock@fertiledger.test",           // STOCK_MANAGER
+  fms: "fms@fertiledger.test",               // FMS_COMPLIANCE
+  viewer: "viewer@fertiledger.test",         // VIEWER
 } as const;
 export type TestUser = keyof typeof USERS;
 

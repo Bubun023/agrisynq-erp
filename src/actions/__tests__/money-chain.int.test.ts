@@ -132,7 +132,11 @@ describe("purchase -> sale -> receipt -> credit note", () => {
     expect(Math.round((dr - cr) * 100)).toBe(0);
     // debtors on the books == sum of what customers still owe on posted invoices
     const owed = await admin.from("sales_invoices").select("outstanding_amount").eq("tenant_id", ids.tenant).eq("status", "POSTED");
-    expect(Math.round(await glBalance("1010"))).toBe(Math.round((owed.data ?? []).reduce((a, r) => a + Number(r.outstanding_amount), 0)));
+    // ...less customer receipts not yet allocated to an invoice (advances also reduce Debtors)
+    const rc = await admin.from("payment_receipts").select("id, amount").eq("tenant_id", ids.tenant).eq("status", "POSTED").eq("receipt_type", "RECEIPT");
+    const al = await admin.from("receipt_allocations").select("allocated_amount").eq("tenant_id", ids.tenant).eq("invoice_type", "SALES_INVOICE");
+    const advances = (rc.data ?? []).reduce((a, r) => a + Number(r.amount), 0) - (al.data ?? []).reduce((a, r) => a + Number(r.allocated_amount), 0);
+    expect(Math.round(await glBalance("1010"))).toBe(Math.round((owed.data ?? []).reduce((a, r) => a + Number(r.outstanding_amount), 0) - advances));
   });
 
   it("a viewer cannot post documents", async () => {
