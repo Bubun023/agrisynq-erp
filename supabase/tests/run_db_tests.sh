@@ -10,8 +10,14 @@ MIG="$HERE/../migrations"
 w() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
 C=fl-pg
 
-docker inspect "$C" >/dev/null 2>&1 || docker run -d --name "$C" -e POSTGRES_PASSWORD=pw postgres:16-alpine >/dev/null
-until docker exec "$C" pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+# create the container if missing, start it if it exists but is stopped (e.g. after a Docker restart)
+if docker inspect "$C" >/dev/null 2>&1; then
+  [ "$(docker inspect -f '{{.State.Running}}' "$C")" = "true" ] || docker start "$C" >/dev/null
+else
+  docker run -d --name "$C" -e POSTGRES_PASSWORD=pw postgres:16-alpine >/dev/null
+fi
+for _ in $(seq 1 60); do docker exec "$C" pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
+docker exec "$C" pg_isready -U postgres >/dev/null 2>&1 || { echo "Postgres container '$C' did not become ready"; exit 1; }
 
 docker exec "$C" psql -U postgres -q -c "DROP DATABASE IF EXISTS fl WITH (FORCE)" -c "CREATE DATABASE fl"
 docker cp "$(w "$HERE/supabase_stub.sql")" "$C:/stub.sql" >/dev/null

@@ -1,28 +1,27 @@
 import type { Metadata } from "next";
-import { FilePlus2 } from "lucide-react";
+import { redirect } from "next/navigation";
+import { getUserContext } from "@/actions/context";
+import { getFmsImportBatches } from "@/actions/fms";
+import FmsImportClient from "./FmsImportClient";
 
-export const metadata: Metadata = {
-  title: "Import FMS Data — FertiLedger ERP",
-};
+export const metadata: Metadata = { title: "Import FMS Data — FertiLedger ERP" };
+export const dynamic = "force-dynamic";
 
-export default function FmsImportPage() {
+export default async function FmsImportPage() {
+  try { await getUserContext(); } catch { redirect("/login"); }
+  const batches = await getFmsImportBatches();
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="page-header">
         <div>
           <h1 className="page-title">Import FMS Data</h1>
-          <p className="page-subtitle">Upload FMS, iFMS, and PoS transaction files</p>
+          <p className="page-subtitle">
+            Upload the transaction report from the FMS/iFMS portal and match every line to your sales by PoS transaction ID
+          </p>
         </div>
       </div>
-      <div className="card p-8 flex flex-col items-center justify-center text-center min-h-[320px] gap-4">
-        <div className="p-4 rounded-2xl bg-surface-subtle">
-          <FilePlus2 className="w-8 h-8 text-ink-faint" strokeWidth={1.5} />
-        </div>
-        <div>
-          <p className="text-sm font-medium text-ink">Coming in Phase 8</p>
-          <p className="text-sm text-ink-muted mt-1 max-w-sm">Import CSV or Excel files downloaded from the FMS/iFMS portal. Validates headers, extracts only the last 4 Aadhaar digits, and queues automated matching.</p>
-        </div>
-      </div>
+      <FmsImportClient initialBatches={batches} />
     </div>
   );
 }

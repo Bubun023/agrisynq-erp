@@ -248,3 +248,127 @@ export async function reissueFarmerSale(input: ReissueInput) {
   revalidatePath("/inventory/ledger");
   return { success: true, newSaleNumber: row.sale_number };
 }
+
+// ─── Portal data import & matching ────────────────────────────
+
+export type ImportMatchStatus =
+  | "MATCHED" | "QTY_MISMATCH" | "SUBSIDY_MISMATCH" | "MISSING_IN_SYSTEM"
+  | "CANCELLED_IN_SYSTEM" | "NOT_POSTED" | "DUPLICATE_IN_FILE" | "INVALID";
+
+export interface FmsImportBatch {
+  id: string;
+  filename: string | null;
+  fms_dealer_id: string;
+  period_from: string;
+  period_to: string;
+  total_lines: number;
+  matched: number;
+  mismatched: number;
+  missing_in_system: number;
+  cancelled_in_system: number;
+  not_posted: number;
+  duplicate_in_file: number;
+  invalid_lines: number;
+  missing_in_portal: number;
+  created_at: string;
+}
+
+export interface FmsImportLine {
+  id: string;
+  line_no: number;
+  pos_transaction_id: string | null;
+  txn_date: string | null;
+  farmer_name: string | null;
+  fms_product_code: string | null;
+  qty: number | null;
+  subsidy_amount: number | null;
+  ack_no: string | null;
+  match_status: ImportMatchStatus;
+  matched_sale_id: string | null;
+  system_qty: number | null;
+  system_subsidy: number | null;
+  note: string | null;
+}
+
+export interface FmsMissingInPortal {
+  sale_id: string;
+  sale_number: string;
+  sale_date: string;
+  farmer_name: string;
+  pos_transaction_id: string | null;
+  qty_sold: number;
+  total_subsidy_amount: number;
+  status: string;
+}
+
+const ImportSchema = z.object({
+  filename:   z.string().max(200).optional().or(z.literal("")),
+  dealerId:   z.string().trim().min(1, "FMS dealer ID is required").max(50),
+  periodFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Select the period start"),
+  periodTo:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Select the period end"),
+  lines: z.array(z.object({
+    pos_id:       z.string().max(100),
+    date:         z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    farmer:       z.string().max(200).optional(),
+    product_code: z.string().max(50).optional(),
+    qty:          z.number().min(0).max(1e9),
+    subsidy:      z.number().min(0).max(1e12),
+    ack:          z.string().max(100).optional(),
+  })).min(1, "The file contains no transactions").max(20000, "Too many lines (max 20,000 per import)"),
+});
+export type FmsImportInput = z.infer<typeof ImportSchema>;
+
+export async function importFmsData(input: FmsImportInput) {
+  const parsed = ImportSchema.safeParse(input);
+  if (!parsed.success) return { success: false as const, error: parsed.error.issues[0]?.message ?? "Invalid import" };
+  const d = parsed.data;
+
+  const supabase = createClient();
+  const ctx = await getUserContext();
+  const { data, error } = await supabase.rpc("import_fms_data", {
+    p_organisation_id: ctx.organisationId,
+    p_filename:        d.filename || null,
+    p_dealer_id:       d.dealerId,
+    p_period_from:     d.periodFrom,
+    p_period_to:       d.periodTo,
+    p_lines:           d.lines,
+  });
+  if (error) return { success: false as const, error: error.message };
+
+  const batch = data as FmsImportBatch;
+  await writeAuditLog({ ctx, action: "FMS_IMPORT", tableName: "fms_import_batches", recordId: batch.id,
+    newValues: { lines: batch.total_lines, matched: batch.matched, dealer: d.dealerId } });
+  revalidatePath("/fms/import");
+  revalidatePath("/fms/ledger");
+  return { success: true as const, batch };
+}
+
+export async function getFmsImportBatches(): Promise<FmsImportBatch[]> {
+  const supabase = createClient();
+  const ctx = await getUserContext();
+  const { data, error } = await supabase
+    .from("fms_import_batches")
+    .select("*")
+    .eq("organisation_id", ctx.organisationId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) throw new Error(`FMS imports error: ${error.message}`);
+  return (data ?? []) as FmsImportBatch[];
+}
+
+export async function getFmsImportDetail(batchId: string): Promise<{ lines: FmsImportLine[]; missingInPortal: FmsMissingInPortal[] }> {
+  const supabase = createClient();
+  const ctx = await getUserContext();
+
+  const { data: b } = await supabase.from("fms_import_batches").select("id")
+    .eq("id", batchId).eq("organisation_id", ctx.organisationId).maybeSingle();
+  if (!b) throw new Error("Import not found.");
+
+  const [lines, missing] = await Promise.all([
+    supabase.from("fms_import_lines").select("*").eq("batch_id", batchId).order("line_no", { ascending: true }).limit(20000),
+    supabase.rpc("fms_import_missing_in_portal", { p_batch_id: batchId }),
+  ]);
+  if (lines.error) throw new Error(`Import lines error: ${lines.error.message}`);
+  if (missing.error) throw new Error(`Missing-in-portal error: ${missing.error.message}`);
+  return { lines: (lines.data ?? []) as FmsImportLine[], missingInPortal: (missing.data ?? []) as FmsMissingInPortal[] };
+}
