@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Users, Package, Warehouse, FileCheck, ShoppingCart, Truck, ReceiptText, FileText, ArrowLeftRight, ClipboardList, BookOpen, CreditCard, Building2, PiggyBank, BarChart3, ScrollText, RefreshCcw, Settings, Shield, FileSearch, ChevronDown, ChevronRight, Sprout, Boxes, FilePlus2, Banknote, Calculator, AlertCircle } from "lucide-react";
+import { LayoutDashboard, Users, Package, Warehouse, FileCheck, ShoppingCart, Truck, ReceiptText, FileText, ArrowLeftRight, ClipboardList, BookOpen, CreditCard, Building2, PiggyBank, BarChart3, ScrollText, RefreshCcw, Settings, Shield, FileSearch, ChevronDown, ChevronRight, Sprout, Boxes, FilePlus2, Banknote, Calculator, AlertCircle, Upload } from "lucide-react";
 import { useState } from "react";
 
 // ─── Nav structure ─────────────────────────────────────────────────────────
@@ -136,6 +136,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Period Locks",      href: "/admin/periods",         icon: FileCheck },
       { label: "Tax Profiles",      href: "/admin/tax-profiles",    icon: Calculator },
       { label: "Units of Measure",  href: "/admin/uom",             icon: Package },
+      { label: "Data Import",       href: "/admin/import",          icon: Upload },
       { label: "Settings",          href: "/admin/settings",        icon: Settings },
     ],
   },

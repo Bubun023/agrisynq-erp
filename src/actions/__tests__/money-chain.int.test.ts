@@ -136,7 +136,13 @@ describe("purchase -> sale -> receipt -> credit note", () => {
     const rc = await admin.from("payment_receipts").select("id, amount").eq("tenant_id", ids.tenant).eq("status", "POSTED").eq("receipt_type", "RECEIPT");
     const al = await admin.from("receipt_allocations").select("allocated_amount").eq("tenant_id", ids.tenant).eq("invoice_type", "SALES_INVOICE");
     const advances = (rc.data ?? []).reduce((a, r) => a + Number(r.amount), 0) - (al.data ?? []).reduce((a, r) => a + Number(r.allocated_amount), 0);
-    expect(Math.round(await glBalance("1010"))).toBe(Math.round((owed.data ?? []).reduce((a, r) => a + Number(r.outstanding_amount), 0) - advances));
+    // ...plus customer balances brought forward at go-live (carried on the party ledger, not on any invoice)
+    const ob = await admin.from("journal_vouchers").select("id").eq("tenant_id", ids.tenant).eq("reference_type", "OPENING_BALANCE");
+    const debtorAcct = (await admin.from("chart_of_accounts").select("id").eq("tenant_id", ids.tenant).eq("account_code", "1010").single()).data!.id;
+    const obLines = (ob.data ?? []).length === 0 ? [] : (await admin.from("journal_voucher_lines").select("debit_amount, credit_amount")
+      .eq("tenant_id", ids.tenant).eq("account_id", debtorAcct).in("voucher_id", (ob.data ?? []).map((v) => v.id))).data ?? [];
+    const brought = obLines.reduce((a, l) => a + Number(l.debit_amount) - Number(l.credit_amount), 0);
+    expect(Math.round(await glBalance("1010"))).toBe(Math.round((owed.data ?? []).reduce((a, r) => a + Number(r.outstanding_amount), 0) - advances + brought));
   });
 
   it("a viewer cannot post documents", async () => {
