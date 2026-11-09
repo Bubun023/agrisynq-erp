@@ -28,7 +28,7 @@ type Challan = {
   challan_no: string;
   challan_date: string;
   purpose: PurposeType;
-  status: 'DISPATCHED' | 'DELIVERED' | 'RETURNED' | 'CANCELLED';
+  status: 'DRAFT' | 'DISPATCHED' | 'DELIVERED' | 'RETURNED' | 'INVOICED' | 'CANCELLED';
   dispatch_location_id: string;
   consignee_name: string;
   consignee_gstin: string | null;
@@ -48,21 +48,31 @@ type Challan = {
 };
 
 type PurposeType =
-  | 'BILL_TO_SHIP_TO'
-  | 'CNF_DIRECT_DISPATCH'
+  | 'DELIVERY_AGAINST_INVOICE'
   | 'STOCK_TRANSFER'
-  | 'SALES_ON_APPROVAL'
-  | 'EXHIBITION_OR_DEMO'
-  | 'OTHER_LAWFUL_MOVEMENT';
+  | 'JOB_WORK_OUT'
+  | 'JOB_WORK_RETURN'
+  | 'CONSIGNMENT_OUT'
+  | 'CONSIGNMENT_RETURN'
+  | 'SALE_ON_APPROVAL'
+  | 'EXHIBITION_DEMO'
+  | 'CF_DISPATCH'
+  | 'RETURN_TO_SUPPLIER'
+  | 'OTHER_PERMITTED';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PURPOSES: { value: PurposeType; label: string; color: string }[] = [
-  { value: 'BILL_TO_SHIP_TO',        label: 'Bill-to Ship-to',        color: 'badge-info' },
-  { value: 'CNF_DIRECT_DISPATCH',    label: 'C&F Direct Dispatch',    color: 'badge-warning' },
-  { value: 'STOCK_TRANSFER',         label: 'Stock Transfer',         color: 'badge-info' },
-  { value: 'SALES_ON_APPROVAL',      label: 'Sales on Approval',      color: 'badge-warning' },
-  { value: 'EXHIBITION_OR_DEMO',     label: 'Exhibition / Demo',      color: 'badge' },
-  { value: 'OTHER_LAWFUL_MOVEMENT',  label: 'Other Lawful Movement',  color: 'badge' },
+  { value: 'DELIVERY_AGAINST_INVOICE', label: 'Delivery against invoice', color: 'badge-info' },
+  { value: 'STOCK_TRANSFER',           label: 'Stock transfer',           color: 'badge-info' },
+  { value: 'CF_DISPATCH',              label: 'C&F dispatch',             color: 'badge-warning' },
+  { value: 'SALE_ON_APPROVAL',         label: 'Sale on approval',         color: 'badge-warning' },
+  { value: 'JOB_WORK_OUT',             label: 'Job work (out)',           color: 'badge' },
+  { value: 'JOB_WORK_RETURN',          label: 'Job work (return)',        color: 'badge' },
+  { value: 'CONSIGNMENT_OUT',          label: 'Consignment (out)',        color: 'badge' },
+  { value: 'CONSIGNMENT_RETURN',       label: 'Consignment (return)',     color: 'badge' },
+  { value: 'EXHIBITION_DEMO',          label: 'Exhibition / demo',        color: 'badge' },
+  { value: 'RETURN_TO_SUPPLIER',       label: 'Return to supplier',       color: 'badge' },
+  { value: 'OTHER_PERMITTED',          label: 'Other permitted movement', color: 'badge' },
 ];
 
 const STATUS_FILTERS = ['ALL', 'DISPATCHED', 'DELIVERED', 'RETURNED', 'CANCELLED'] as const;
@@ -85,6 +95,8 @@ function PurposeBadge({ purpose }: { purpose: PurposeType }) {
 
 function StatusBadge({ status }: { status: Challan['status'] }) {
   const map: Record<Challan['status'], string> = {
+    DRAFT:      'badge badge-warning',
+    INVOICED:   'badge badge-info',
     DISPATCHED: 'badge badge-warning',
     DELIVERED:  'badge badge-success',
     RETURNED:   'badge badge-danger',

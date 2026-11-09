@@ -82,12 +82,17 @@ const createDeliveryChallanSchema = z.object({
   challan_no: z.string().min(3, 'Challan number is required'),
   challan_date: z.string().min(1, 'Challan date is required'),
   purpose: z.enum([
-    'BILL_TO_SHIP_TO',
-    'CNF_DIRECT_DISPATCH',
+    'DELIVERY_AGAINST_INVOICE',
     'STOCK_TRANSFER',
-    'SALES_ON_APPROVAL',
-    'EXHIBITION_OR_DEMO',
-    'OTHER_LAWFUL_MOVEMENT',
+    'JOB_WORK_OUT',
+    'JOB_WORK_RETURN',
+    'CONSIGNMENT_OUT',
+    'CONSIGNMENT_RETURN',
+    'SALE_ON_APPROVAL',
+    'EXHIBITION_DEMO',
+    'CF_DISPATCH',
+    'RETURN_TO_SUPPLIER',
+    'OTHER_PERMITTED',
   ]),
   dispatch_location_id: z.string().uuid('Dispatch location is required'),
   bill_to_party_id: z.string().uuid().optional().nullable().or(z.literal('')),
@@ -337,7 +342,7 @@ export async function getDeliveryChallans() {
     .from('delivery_challans')
     .select(`
       *,
-      dispatch_location:locations(id, name),
+      dispatch_location:locations!delivery_challans_from_location_fkey(id, name),
       bill_to_party:parties!delivery_challans_bill_to_party_id_fkey(id, name, gstin),
       ship_to_party:parties!delivery_challans_ship_to_party_id_fkey(id, name, gstin),
       transporter:transporters(id, legal_name, gstin),
@@ -348,10 +353,23 @@ export async function getDeliveryChallans() {
       )
     `)
     .eq('tenant_id', ctx.tenantId)
-    .order('created_at', { ascending: false });
+    .eq('organisation_id', ctx.organisationId)
+    .order('created_at', { ascending: false })
+    .limit(500);
 
   if (error) throw new Error(error.message);
-  return data ?? [];
+
+  // The table uses the 025 column names; the screen uses friendlier ones.
+  return (data ?? []).map((c) => ({
+    ...c,
+    challan_no: c.challan_number,
+    dispatch_location_id: c.from_location,
+    vehicle_no: c.vehicle_number,
+    eway_bill_no: c.eway_bill_number,
+    remarks: c.narration,
+    consignee_name: c.consignee_name ?? c.party_name ?? '',
+    place_of_supply_state: c.place_of_supply_state ?? '',
+  }));
 }
 
 export async function createDeliveryChallan(input: CreateDeliveryChallanInput) {
@@ -370,24 +388,29 @@ export async function createDeliveryChallan(input: CreateDeliveryChallanInput) {
       tenant_id: ctx.tenantId,
       organisation_id: ctx.organisationId,
       branch_id: ctx.branchId,
-      challan_no: payload.challan_no.trim().toUpperCase(),
+      challan_number: payload.challan_no.trim().toUpperCase(),
       challan_date: payload.challan_date,
       purpose: payload.purpose,
       status: 'DISPATCHED',
-      dispatch_location_id: payload.dispatch_location_id,
+      dispatched_at: new Date().toISOString(),
+      from_location: payload.dispatch_location_id,
       bill_to_party_id: payload.bill_to_party_id || null,
       ship_to_party_id: payload.ship_to_party_id || null,
+      party_id: payload.ship_to_party_id || payload.bill_to_party_id || null,
+      party_name: payload.consignee_name.trim(),
       consignee_name: payload.consignee_name.trim(),
       consignee_gstin: payload.consignee_gstin || null,
       delivery_address: payload.delivery_address.trim(),
       place_of_supply_state: payload.place_of_supply_state.trim(),
       transporter_id: payload.transporter_id || null,
-      vehicle_no: payload.vehicle_no?.toUpperCase() || null,
+      vehicle_number: payload.vehicle_no?.toUpperCase() || null,
       driver_name: payload.driver_name || null,
       driver_mobile: payload.driver_mobile || null,
       distance_km: payload.distance_km ?? null,
-      eway_bill_no: payload.eway_bill_no || null,
-      remarks: payload.remarks || null,
+      eway_bill_number: payload.eway_bill_no || null,
+      total_qty: payload.items.reduce((s, i) => s + i.qty, 0),
+      approximate_value: Math.round(payload.items.reduce((s, i) => s + i.qty * i.declared_unit_rate, 0) * 100) / 100,
+      narration: payload.remarks || null,
       created_by: ctx.userId,
       updated_by: ctx.userId,
     })
@@ -412,7 +435,7 @@ export async function createDeliveryChallan(input: CreateDeliveryChallanInput) {
   const { error: itemErr } = await supabase.from('delivery_challan_items').insert(itemRows);
   if (itemErr) return { success: false, error: itemErr.message };
 
-  await writeAuditLog({ ctx, action: "INSERT", tableName: "delivery_challans", recordId: challan.id, newValues: { challan_no: challan.challan_no } });
+  await writeAuditLog({ ctx, action: "INSERT", tableName: "delivery_challans", recordId: challan.id, newValues: { challan_number: challan.challan_number } });
 
   revalidatePath('/logistics/challans');
   return { success: true, data: challan };
