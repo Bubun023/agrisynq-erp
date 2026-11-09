@@ -110,6 +110,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Import FMS Data",   href: "/fms/import",            icon: FilePlus2 },
       { label: "Reconciliation",    href: "/fms/reconciliation",    icon: RefreshCcw },
       { label: "Cancel & Reissue",  href: "/fms/reissue",           icon: AlertCircle },
+      { label: "Subsidy Claims",    href: "/fms/subsidy",           icon: Banknote },
     ],
   },
   {
