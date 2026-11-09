@@ -57,7 +57,7 @@ export async function createCreditNote(_prev: CNFormState, formData: FormData): 
     const computedLines = lines.map((l, i) => {
       const c = calcs[i];
       return {
-        tenant_id: ctx.tenantId, line_no: i + 1,
+        tenant_id: ctx.tenantId,
         original_line_id: l.original_line_id || null,
         product_id: l.product_id, hsn_code: l.hsn_code,
         batch_id: l.batch_id || null,
@@ -107,7 +107,11 @@ export async function createCreditNote(_prev: CNFormState, formData: FormData): 
 
     const lineInserts = computedLines.map((l) => ({ ...l, credit_note_id: cn.id }));
     const { error: clErr } = await supabase.from("credit_note_lines").insert(lineInserts);
-    if (clErr) throw new Error("Credit note saved but lines failed: " + clErr.message);
+    if (clErr) {
+      // do not leave an empty draft behind: drafts can be cancelled by their creator
+      await supabase.from("credit_notes").update({ status: "CANCELLED" }).eq("id", cn.id).eq("tenant_id", ctx.tenantId);
+      throw new Error("Could not save the credit note lines: " + clErr.message);
+    }
 
     await writeAuditLog({ ctx, action: "INSERT", tableName: "credit_notes", recordId: cn.id,
       newValues: { cn_number: cn.credit_note_number, original_invoice_id: originalInvoiceId, total_amount: totalAmount } });

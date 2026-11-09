@@ -211,7 +211,7 @@ export async function getSalesInvoices(filters?: {
     let q = supabase.from("sales_invoices")
       .select(`id, invoice_number, invoice_date, invoice_type, sale_type, status,
                customer_id, customer_name, customer_gstin, customer_phone,
-               parties(name),
+               parties!sales_invoices_customer_id_fkey(name),
                from_location, locations(name, code),
                is_interstate, is_reverse_charge, place_of_supply,
                taxable_amount, cgst_amount, sgst_amount, igst_amount,

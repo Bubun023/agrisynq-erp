@@ -1,0 +1,87 @@
+# Local Supabase-compatible stack for developing and smoke-testing FertiLedger ERP.
+# Uses the public Supabase images (database, GoTrue auth, PostgREST, Kong gateway) on NON-default ports so it can
+# run next to any other Supabase project:  API http://127.0.0.1:55321   Postgres 127.0.0.1:55322
+# DEV ONLY - the JWT secret below is a throw-away local value. Never reuse it anywhere real.
+#
+#   docker compose -f supabase/local/docker-compose.yml -p fertiledger up -d db
+#   (then see supabase/local/README.md / scripts/local-stack.sh for the full sequence)
+name: fertiledger
+
+x-jwt: &jwt "fertiledger-local-dev-secret-0123456789-abcdef"
+
+services:
+  db:
+    container_name: fl-local-db
+    image: public.ecr.aws/supabase/postgres:17.6.1.084
+    ports: ["55322:5432"]
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: "5432"
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+      JWT_SECRET: *jwt
+      JWT_EXP: "3600"
+    volumes:
+      - fl-local-dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  auth:
+    container_name: fl-local-auth
+    image: public.ecr.aws/supabase/gotrue:v2.193.1
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: http://127.0.0.1:55321
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:postgres@db:5432/postgres
+      GOTRUE_SITE_URL: http://localhost:3000
+      GOTRUE_URI_ALLOW_LIST: http://localhost:3000/**
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_SECRET: *jwt
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_SMTP_ADMIN_EMAIL: admin@example.test
+      GOTRUE_SMTP_HOST: localhost
+      GOTRUE_SMTP_PORT: "2500"
+      GOTRUE_SMTP_SENDER_NAME: FertiLedger Local
+
+  rest:
+    container_name: fl-local-rest
+    image: public.ecr.aws/supabase/postgrest:v14.4
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      PGRST_DB_URI: postgres://authenticator:postgres@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: *jwt
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: *jwt
+      PGRST_APP_SETTINGS_JWT_EXP: "3600"
+
+  kong:
+    container_name: fl-local-kong
+    image: public.ecr.aws/supabase/kong:2.8.1
+    depends_on: [auth, rest]
+    ports: ["55321:8000"]
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: cors
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+    volumes:
+      - ./kong.yml:/home/kong/kong.yml:ro
+
+volumes:
+  fl-local-dbdata:

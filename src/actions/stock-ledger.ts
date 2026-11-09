@@ -97,25 +97,38 @@ export async function getStockBalance(productId?: string, locationId?: string) {
     const supabase = createClient();
     const ctx = await getUserContext();
 
-    const { data, error } = await supabase
+    // stock_balance is a VIEW, so related names cannot be embedded: read the balances, then look names up.
+    let q = supabase
       .from("stock_balance")
-      .select(`
-        product_id, products(name, product_code, unit_of_measure),
-        location_id, locations(name, code),
-        batch_id, batch_register(batch_number, expiry_date),
-        balance_qty, last_movement_date
-      `)
+      .select("product_id, location_id, batch_id, balance_qty, last_movement_date")
       .eq("tenant_id", ctx.tenantId)
       .eq("organisation_id", ctx.organisationId)
       .gt("balance_qty", 0)
       .order("last_movement_date", { ascending: false });
+    if (productId)  q = q.eq("product_id", productId);
+    if (locationId) q = q.eq("location_id", locationId);
 
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
+    const rows = data ?? [];
+    if (rows.length === 0) return [];
 
-    let result = data ?? [];
-    if (productId)  result = result.filter((r: { product_id: string }) => r.product_id === productId);
-    if (locationId) result = result.filter((r: { location_id: string | null }) => r.location_id === locationId);
-    return result;
+    const uniq = (xs: (string | null)[]) => Array.from(new Set(xs.filter((x): x is string => !!x)));
+    const [prods, locs, batches] = await Promise.all([
+      supabase.from("products").select("id, name, product_code, unit_of_measure").in("id", uniq(rows.map((r) => r.product_id))),
+      supabase.from("locations").select("id, name, code").in("id", uniq(rows.map((r) => r.location_id))),
+      supabase.from("batch_register").select("id, batch_number, expiry_date").in("id", uniq(rows.map((r) => r.batch_id))),
+    ]);
+    for (const r of [prods, locs, batches]) if (r.error) throw new Error(r.error.message);
+    const byId = <T extends { id: string }>(xs: T[] | null) => new Map((xs ?? []).map((x) => [x.id, x]));
+    const P = byId(prods.data), L = byId(locs.data), B = byId(batches.data);
+
+    return rows.map((r) => ({
+      ...r,
+      products: P.get(r.product_id) ?? null,
+      locations: r.location_id ? L.get(r.location_id) ?? null : null,
+      batch_register: r.batch_id ? B.get(r.batch_id) ?? null : null,
+    }));
   } catch (err) {
     console.error("[stock-ledger] getStockBalance error:", err);
     return [];

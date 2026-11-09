@@ -84,6 +84,9 @@ INSERT INTO user_profiles(id, tenant_id, full_name) VALUES (:U, :T, 'Memo Admin'
 INSERT INTO organisations(id, tenant_id, legal_name) VALUES (:O, :T, 'Memo Agro');
 INSERT INTO user_roles(tenant_id, user_id, role_id, organisation_id)
   SELECT :T, :U, id, :O FROM roles WHERE tenant_id = :T AND name = 'SUPER_ADMIN';
+-- the OTHER company's user is a real admin of their own company, so cross-tenant checks are what stops them (not a missing role)
+INSERT INTO user_roles(tenant_id, user_id, role_id)
+  SELECT :T2, :U2, id FROM roles WHERE tenant_id = :T2 AND name = 'SUPER_ADMIN';
 INSERT INTO user_roles(tenant_id, user_id, role_id, organisation_id)
   SELECT :T, :UV, id, :O FROM roles WHERE tenant_id = :T AND name = 'VIEWER';
 INSERT INTO locations(id, tenant_id, organisation_id, name, location_type)
@@ -272,8 +275,8 @@ SELECT set_config('request.jwt.claim.sub', :U2, false);
 SELECT t_eq('other tenant sees no memos', (SELECT COUNT(*) FROM memo_purchases), 0);
 SELECT t_eq('other tenant sees no pending list', (SELECT COUNT(*) FROM vw_memo_pending), 0);
 SELECT t_eq('other tenant sees no stock journals', (SELECT COUNT(*) FROM stock_journals), 0);
-SELECT t_fails('other tenant cannot post our memo', $$SELECT post_memo_purchase('00000000-0000-0000-0000-00000000b5a1')$$, 'Only an admin');
-SELECT t_fails('other tenant cannot close our memo line', $$SELECT close_memo_units('00000000-0000-0000-0000-00000000b6b4', 1, 'WAIVED', 'x')$$, 'Only an admin');
+SELECT t_fails('other tenant cannot post our memo', $$SELECT post_memo_purchase('00000000-0000-0000-0000-00000000b5a1')$$, 'Memo purchase not found');
+SELECT t_fails('other tenant cannot close our memo line', $$SELECT close_memo_units('00000000-0000-0000-0000-00000000b6b4', 1, 'WAIVED', 'x')$$, 'Memo line not found');
 
 RESET ROLE;
 DROP FUNCTION public.t_eq(text,numeric,numeric), public.t_near(text,numeric,numeric,numeric), public.t_fails(text,text,text), public.t_dr(text),

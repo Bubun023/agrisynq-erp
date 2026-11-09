@@ -55,6 +55,9 @@ INSERT INTO user_profiles(id, tenant_id, full_name) VALUES (:U, :T, 'CF Admin'),
 INSERT INTO organisations(id, tenant_id, legal_name) VALUES (:O, :T, 'CF Agro');
 INSERT INTO user_roles(tenant_id, user_id, role_id, organisation_id)
   SELECT :T, :U, id, :O FROM roles WHERE tenant_id = :T AND name = 'SUPER_ADMIN';
+-- the OTHER company's user is a real admin of their own company, so cross-tenant checks are what stops them (not a missing role)
+INSERT INTO user_roles(tenant_id, user_id, role_id)
+  SELECT :T2, :U2, id FROM roles WHERE tenant_id = :T2 AND name = 'SUPER_ADMIN';
 INSERT INTO parties(id, tenant_id, organisation_id, name, party_type)
   VALUES ('00000000-0000-0000-0000-00000000c0a1', :T, :O, 'Sharma C&F Agency', 'CF_AGENT');
 INSERT INTO locations(id, tenant_id, organisation_id, name, location_type, custodian_party_id, stock_confirmation_freq_days) VALUES

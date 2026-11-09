@@ -170,7 +170,7 @@ export async function getSalesOrders(filters?: { status?: string; fromDate?: str
     let q = supabase.from("sales_orders")
       .select(`id, order_number, order_date, delivery_date, status, reference_no,
                customer_id, customer_name, customer_gstin, customer_phone,
-               parties(name),
+               parties!sales_orders_customer_id_fkey(name),
                is_credit_sale, advance_received, payment_terms_days,
                total_taxable_amount, total_gst_amount, total_amount, created_at`)
       .eq("tenant_id", ctx.tenantId).eq("organisation_id", ctx.organisationId)

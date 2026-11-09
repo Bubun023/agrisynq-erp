@@ -62,7 +62,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     q("payables", () => supabase.from("vw_ageing_payables").select("outstanding")
       .eq("organisation_id", org).gt("days_overdue", 0), [] as { outstanding: number }[]),
     q("transfers", () => supabase.from("stock_transfers").select("id")
-      .eq("organisation_id", org).eq("status", "DISPATCHED"), [] as { id: string }[]),
+      .eq("organisation_id", org).eq("status", "IN_TRANSIT"), [] as { id: string }[]),
     q("stock", () => supabase.from("stock_balance").select("balance_qty")
       .eq("organisation_id", org), [] as { balance_qty: number }[]),
     q("stock value", () => supabase.from("vw_trial_balance").select("period_debit, period_credit, opening_balance, opening_balance_type")
