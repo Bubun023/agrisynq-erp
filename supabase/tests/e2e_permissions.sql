@@ -102,8 +102,8 @@ SELECT t_eq('BRANCH_ADMIN: sales/purchases/accounting/inventory/fms posting', (h
   + (has_permission('accounting','post'))::int + (has_permission('inventory','post'))::int + (has_permission('fms','approve'))::int, 5);
 SELECT t_eq('BRANCH_ADMIN: no user admin, no period locks, no audit log', (has_permission('admin_users','create'))::int + (has_permission('admin_periods','approve'))::int + (has_permission('audit_log','read'))::int, 0);
 SELECT t_as(:UC);
-SELECT t_eq('ACCOUNTANT: accounting.post + purchases.post + purchases.create', (has_permission('accounting','post'))::int + (has_permission('purchases','post'))::int + (has_permission('purchases','create'))::int, 3);
-SELECT t_eq('ACCOUNTANT: not sales.post, not inventory.post', (has_permission('sales','post'))::int + (has_permission('inventory','post'))::int, 0);
+SELECT t_eq('ACCOUNTANT: accounting.post + purchases.post + purchases.create + sales.post', (has_permission('accounting','post'))::int + (has_permission('purchases','post'))::int + (has_permission('purchases','create'))::int + (has_permission('sales','post'))::int, 4);
+SELECT t_eq('ACCOUNTANT: not inventory.post', (has_permission('inventory','post'))::int, 0);
 SELECT t_as(:US);
 SELECT t_eq('SALES_MANAGER: sales.post yes; purchases.post / accounting.post no', (has_permission('sales','post'))::int * 10 + (has_permission('purchases','post'))::int + (has_permission('accounting','post'))::int, 10);
 SELECT t_as(:UK);
@@ -137,7 +137,7 @@ SELECT t_as(:UB);
 SELECT post_purchase_invoice((SELECT id FROM purchase_invoices WHERE invoice_number = 'PI-BY-BRANCH'));
 SELECT t_eq('branch admin posted a purchase invoice', (SELECT (status = 'POSTED')::int FROM purchase_invoices WHERE invoice_number = 'PI-BY-BRANCH'), 1);
 
--- sales: sales manager and admin can; accountant, stock manager, FMS officer and viewer cannot
+-- sales: sales manager and admin can; accountant too; stock manager, FMS officer and viewer cannot
 SELECT t_as(:UA);
 SELECT t_si('SI-BY-SALES', (SELECT batch_id FROM purchase_invoice_lines WHERE invoice_id = (SELECT id FROM purchase_invoices WHERE invoice_number = 'PI-OK-ADMIN')));
 SELECT t_si('SI-BY-ACCT',  (SELECT batch_id FROM purchase_invoice_lines WHERE invoice_id = (SELECT id FROM purchase_invoices WHERE invoice_number = 'PI-OK-ADMIN')));
@@ -148,7 +148,8 @@ SELECT t_as(:US);
 SELECT post_sales_invoice((SELECT id FROM sales_invoices WHERE invoice_number = 'SI-BY-SALES'));
 SELECT t_eq('sales manager posted a sales invoice', (SELECT (status = 'POSTED')::int FROM sales_invoices WHERE invoice_number = 'SI-BY-SALES'), 1);
 SELECT t_as(:UC);
-SELECT t_fails('accountant cannot post a sales invoice (per the matrix)', $$SELECT post_sales_invoice((SELECT id FROM sales_invoices WHERE invoice_number = 'SI-BY-ACCT'))$$, 'permission to post sales');
+SELECT post_sales_invoice((SELECT id FROM sales_invoices WHERE invoice_number = 'SI-BY-ACCT'));
+SELECT t_eq('accountant posted a sales invoice', (SELECT (status = 'POSTED')::int FROM sales_invoices WHERE invoice_number = 'SI-BY-ACCT'), 1);
 SELECT t_as(:UK);
 SELECT t_fails('stock manager cannot post a sales invoice', $$SELECT post_sales_invoice((SELECT id FROM sales_invoices WHERE invoice_number = 'SI-BY-STOCK'))$$, 'permission to post sales');
 SELECT t_as(:UF);
