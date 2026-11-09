@@ -1,28 +1,37 @@
 import type { Metadata } from "next";
-import { FilePlus2 } from "lucide-react";
+import { redirect } from "next/navigation";
+import { getUserContext } from "@/actions/context";
+import { getMemoPurchases, getPendingMemoLines, getPendingBySupplier } from "@/actions/memo";
+import { getLogisticsFormLookups } from "@/actions/logistics";
+import { getJournalLookups } from "@/actions/stock-journals";
+import MemoPurchasesClient from "./MemoPurchasesClient";
 
-export const metadata: Metadata = {
-  title: "Memo Purchases — FertiLedger ERP",
-};
+export const metadata: Metadata = { title: "Memo Purchases — FertiLedger ERP" };
+export const dynamic = "force-dynamic";
 
-export default function PurchaseMemoPage() {
+export default async function PurchaseMemoPage() {
+  try { await getUserContext(); } catch { redirect("/login"); }
+  const [memos, pendingLines, pendingSuppliers, lookups, journalLookups] = await Promise.all([
+    getMemoPurchases(), getPendingMemoLines(), getPendingBySupplier(), getLogisticsFormLookups(), getJournalLookups(),
+  ]);
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="page-header">
         <div>
           <h1 className="page-title">Memo Purchases</h1>
-          <p className="page-subtitle">Unbilled receipts, free goods, and forced tying</p>
+          <p className="page-subtitle">Goods received before the supplier&apos;s invoice — tracked at cost until the invoice arrives, then matched to it</p>
         </div>
       </div>
-      <div className="card p-8 flex flex-col items-center justify-center text-center min-h-[320px] gap-4">
-        <div className="p-4 rounded-2xl bg-surface-subtle">
-          <FilePlus2 className="w-8 h-8 text-ink-faint" strokeWidth={1.5} />
-        </div>
-        <div>
-          <p className="text-sm font-medium text-ink">Coming in Phase 3</p>
-          <p className="text-sm text-ink-muted mt-1 max-w-sm">Bring physical stock into the system for free goods, forced tying, or unbilled receipts without generating fraudulent ITC entries.</p>
-        </div>
-      </div>
+      <MemoPurchasesClient
+        memos={memos}
+        pendingLines={pendingLines}
+        pendingSuppliers={pendingSuppliers}
+        parties={lookups.parties as { id: string; name: string; party_type: string }[]}
+        products={lookups.products as { id: string; name: string; product_code: string | null; unit_of_measure: string }[]}
+        locations={lookups.locations.map((l) => ({ id: l.id, name: l.name }))}
+        journalLookups={journalLookups}
+      />
     </div>
   );
 }

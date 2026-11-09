@@ -79,6 +79,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Batch Register",     href: "/inventory/batches",      icon: Package },
       { label: "Transfers",          href: "/inventory/transfers",    icon: ArrowLeftRight },
       { label: "Adjustments",        href: "/inventory/adjustments",  icon: AlertCircle },
+      { label: "Stock Journal",      href: "/inventory/journals",     icon: ArrowLeftRight },
     ],
   },
   {

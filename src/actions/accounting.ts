@@ -153,6 +153,7 @@ export async function seedSystemAccounts() {
     { code: '1100', name: 'Fixed Assets',            type: 'ASSET',     group: 'Fixed Assets',    ctrl: null       },
     // Liabilities
     { code: '2001', name: 'Sundry Creditors',        type: 'LIABILITY', group: 'Current Liabilities', ctrl: 'CREDITOR' },
+    { code: '2005', name: 'Goods Received - Invoice Pending', type: 'LIABILITY', group: 'Current Liabilities', ctrl: null },
     { code: '2010', name: 'GST Payable (CGST)',      type: 'LIABILITY', group: 'Tax Liabilities',  ctrl: 'TAX'     },
     { code: '2011', name: 'GST Payable (SGST)',      type: 'LIABILITY', group: 'Tax Liabilities',  ctrl: 'TAX'     },
     { code: '2012', name: 'GST Payable (IGST)',      type: 'LIABILITY', group: 'Tax Liabilities',  ctrl: 'TAX'     },
