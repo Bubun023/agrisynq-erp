@@ -13,7 +13,8 @@ export default defineConfig({
     // Include patterns
     include: ["src/**/*.test.ts", "src/**/*.test.tsx", "tests/**/*.test.ts"],
     // Exclude build output
-    exclude: ["node_modules", ".next"],
+    // *.int.test.ts need the local Supabase stack: run them with `npm run test:int` (vitest.int.config.ts)
+    exclude: ["node_modules", ".next", "**/*.int.test.ts"],
     // Coverage configuration
     coverage: {
       provider: "v8",
