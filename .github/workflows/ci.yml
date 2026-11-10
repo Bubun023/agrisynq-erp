@@ -42,6 +42,13 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Pre-pull the stack images (public ECR throttles shared CI addresses, so retry)
+        run: |
+          for i in 1 2 3 4 5 6; do
+            docker compose -f supabase/local/docker-compose.yml -p fertiledger pull && exit 0
+            echo "pull attempt $i failed; waiting"; sleep $((i * 30))
+          done
+          exit 1
       - name: Start the Supabase-compatible stack and seed it
         run: |
           bash supabase/local/stack.sh up
