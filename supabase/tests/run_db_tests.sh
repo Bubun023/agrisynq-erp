@@ -19,6 +19,9 @@ fi
 # ready = it really answers a query (pg_isready can say yes while the image's first-run init server is still up)
 ready() { docker exec "$C" psql -U postgres -tAc "select 1" >/dev/null 2>&1; }
 for _ in $(seq 1 90); do ready && break; sleep 1; done
+# a brand-new postgres image answers from a temporary init server, shuts it down, then starts the real one: wait for that to finish
+for _ in $(seq 1 90); do docker logs "$C" 2>&1 | grep -q "PostgreSQL init process complete" && break; sleep 1; done
+for _ in $(seq 1 90); do ready && break; sleep 1; done
 ready || { echo "Postgres container '$C' did not become ready"; docker ps -a --filter "name=$C" || true; docker logs "$C" 2>&1 | tail -30 || true; exit 1; }
 
 docker exec "$C" psql -U postgres -q -c "DROP DATABASE IF EXISTS fl WITH (FORCE)" -c "CREATE DATABASE fl"

@@ -24,7 +24,7 @@ if (process.argv.includes("--write")) {
     `NEXT_PUBLIC_SUPABASE_URL=${URL_}`,
     `NEXT_PUBLIC_SUPABASE_ANON_KEY=${anon}`,
     `SUPABASE_SECRET_KEY=${service}`,
-    "NEXT_PUBLIC_APP_NAME=FertiLedger ERP (local)",
+    'NEXT_PUBLIC_APP_NAME="FertiLedger ERP (local)"',
     "",
   ].join("\n");
   fs.writeFileSync(new URL("../../.env.development.local", import.meta.url), env);
