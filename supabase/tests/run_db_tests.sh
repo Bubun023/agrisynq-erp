@@ -16,8 +16,10 @@ if docker inspect "$C" >/dev/null 2>&1; then
 else
   docker run -d --name "$C" -e POSTGRES_PASSWORD=pw postgres:16-alpine >/dev/null
 fi
-for _ in $(seq 1 60); do docker exec "$C" pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
-docker exec "$C" pg_isready -U postgres >/dev/null 2>&1 || { echo "Postgres container '$C' did not become ready"; exit 1; }
+# ready = it really answers a query (pg_isready can say yes while the image's first-run init server is still up)
+ready() { docker exec "$C" psql -U postgres -tAc "select 1" >/dev/null 2>&1; }
+for _ in $(seq 1 90); do ready && break; sleep 1; done
+ready || { echo "Postgres container '$C' did not become ready"; docker ps -a --filter "name=$C" || true; docker logs "$C" 2>&1 | tail -30 || true; exit 1; }
 
 docker exec "$C" psql -U postgres -q -c "DROP DATABASE IF EXISTS fl WITH (FORCE)" -c "CREATE DATABASE fl"
 docker cp "$(w "$HERE/supabase_stub.sql")" "$C:/stub.sql" >/dev/null
