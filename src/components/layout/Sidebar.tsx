@@ -126,6 +126,10 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Reports",
     items: [
       { label: "All Reports",       href: "/reports",               icon: BarChart3 },
+      { label: "Balance Sheet",     href: "/reports/balance-sheet",   icon: Calculator },
+      { label: "Account Ledger",    href: "/reports/account-ledger",  icon: BookOpen },
+      { label: "Party Statement",   href: "/reports/party-statement", icon: FileText },
+      { label: "Stock Valuation",   href: "/reports/stock-valuation", icon: Boxes },
     ],
   },
   {

@@ -4,7 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { signInAs, actAs } from "@/test/int/session";
-import { admin, tag, today, form, mustSucceed, tenantId, idByName, stockOf, seedStock } from "@/test/int/helpers";
+import { admin, tag, today, form, mustSucceed, tenantId, idByName, stockOf, seedStock, glBalance } from "@/test/int/helpers";
 import { createPurchaseOrder, updatePOStatus } from "@/actions/purchase-orders";
 import { createQuotation, createSalesOrder } from "@/actions/sales-orders";
 import { createTransporter, createDeliveryChallan, getDeliveryChallans } from "@/actions/logistics";
@@ -126,9 +126,13 @@ describe("bank statement import and matching", () => {
 describe("stock adjustment", () => {
   it("moves stock and refuses to make it negative", async () => {
     const before = await stockOf({ batchId: stock.batch });
+    const bookStock = await glBalance("1020"), bookLoss = await glBalance("4050");
     const ok = await createStockAdjustment({ adjustment_date: today, product_id: stock.product, batch_id: stock.batch, location_id: stock.location, reason: "DAMAGE", qty_adjustment: -3, notes: "rats" });
     if (ok.error) throw new Error(`createStockAdjustment failed: ${ok.error}`);
     expect(await stockOf({ batchId: stock.batch })).toBe(before - 3);
+    // the books follow the stock: 3 bags lost at cost 10 -> Stock in Hand down 30, Stock Shortage up 30
+    expect(Math.round((bookStock - await glBalance("1020")) * 100) / 100).toBe(30);
+    expect(Math.round((await glBalance("4050") - bookLoss) * 100) / 100).toBe(30);
     const bad = await createStockAdjustment({ adjustment_date: today, product_id: stock.product, batch_id: stock.batch, location_id: stock.location, reason: "RECOUNT", qty_adjustment: -100000 });
     expect(bad.error ?? "").toMatch(/negative/i);
     expect((await getStockAdjustments()).some((a) => a.product_id === stock.product)).toBe(true);
