@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import { CreditCard, Plus, X, AlertCircle, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
 import { createPaymentReceipt, postPaymentReceipt } from '@/actions/accounting';
+import AllocateDialog from './AllocateDialog';
 
 type Allocation = { id: string; invoice_type: string; invoice_id: string; allocated_amount: number };
 
@@ -36,9 +37,10 @@ export default function ReceiptsClient({ initialData }: { initialData: Receipt[]
   const [search, setSearch] = useState('');
   const [showSlide, setShowSlide] = useState(false);
   const [postingId, setPostingId] = useState<string | null>(null);
+  const [allocatingId, setAllocatingId] = useState<string | null>(null);
 
   async function handlePost(r: Receipt) {
-    if (!confirm(`Post ${r.receipt_no}? This creates the accounting entry and settles the party's oldest outstanding invoices. It cannot be edited afterwards.`)) return;
+    if (!confirm(`Post ${r.receipt_no}? This creates the accounting entry and settles the invoices you allocated (or the oldest ones if you did not allocate). It cannot be edited afterwards.`)) return;
     setPostingId(r.id);
     const res = await postPaymentReceipt(r.id);
     setPostingId(null);
@@ -147,6 +149,9 @@ export default function ReceiptsClient({ initialData }: { initialData: Receipt[]
                   <td><span className={cn('badge', r.status === 'POSTED' ? 'badge-success' : r.status === 'DRAFT' ? 'badge-warning' : 'badge-danger')}>{r.status.charAt(0) + r.status.slice(1).toLowerCase()}</span></td>
                   <td className="text-right">
                     {r.status === 'DRAFT' && (
+                      <button onClick={() => setAllocatingId(r.id)} className="mr-2 rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-50">Allocate</button>
+                    )}
+                    {r.status === 'DRAFT' && (
                       <button onClick={() => handlePost(r)} disabled={postingId === r.id} className="btn-primary text-xs px-3 py-1 disabled:opacity-50">
                         {postingId === r.id ? 'Posting…' : 'Post'}
                       </button>
@@ -158,6 +163,10 @@ export default function ReceiptsClient({ initialData }: { initialData: Receipt[]
           </table>
         )}
       </div>
+
+      {allocatingId && (
+        <AllocateDialog receiptId={allocatingId} onClose={() => setAllocatingId(null)} onSaved={() => setAllocatingId(null)} />
+      )}
 
       {showSlide && (
         <NewReceiptSlideOver

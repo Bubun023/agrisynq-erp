@@ -42,7 +42,9 @@ export async function signInAction(
     return { error: "Invalid email or password. Please try again." };
   }
 
-  redirect("/");
+  // only ever follow a path inside this app (never an absolute URL or "//host")
+  const to = String(formData.get("redirectTo") ?? "");
+  redirect(/^\/(?!\/)[\w\-/.?=&%]*$/.test(to) && !to.startsWith("/login") ? to : "/");
 }
 
 /**

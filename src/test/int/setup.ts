@@ -1,5 +1,9 @@
 import { vi } from "vitest";
-import { createTestClient } from "./session";
+import { createTestClient, API_URL, SERVICE_KEY } from "./session";
+
+// actions that use the service-role client (invitations) read these from the environment
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= API_URL;
+process.env.SUPABASE_SECRET_KEY ??= SERVICE_KEY;
 
 // The code under test imports these; replace only the parts that need a Next.js request scope.
 vi.mock("@/lib/supabase/server", () => ({ createClient: () => createTestClient() }));

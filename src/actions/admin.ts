@@ -28,6 +28,8 @@ export type UserInvitation = {
   email: string;
   role_name: string;
   status: 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
+  /** secret part of the invitation link - only ever shown to admins */
+  invite_token?: string;
   expires_at: string;
   created_at: string;
 };
@@ -131,7 +133,7 @@ export async function getInvitations() {
 
   const { data, error } = await supabase
     .from('user_invitations')
-    .select('id, email, role_name, status, expires_at, created_at')
+    .select('id, email, role_name, status, invite_token, expires_at, created_at')
     .eq('organisation_id', ctx.organisationId)
     .order('created_at', { ascending: false });
 

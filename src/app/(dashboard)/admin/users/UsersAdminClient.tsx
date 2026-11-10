@@ -44,11 +44,27 @@ export default function UsersAdminClient({ initialUsers, initialInvitations }: P
     startTransition(async () => {
       const result = await createInvitation(inviteEmail, inviteRole);
       if (result.error) { setMsg('Error: ' + result.error); return; }
-      setMsg(`Invitation recorded for ${inviteEmail} (no email is sent yet).`);
+      const created = result.data as UserInvitation | undefined;
+      setMsg(created?.invite_token
+        ? `Invitation created for ${inviteEmail}. Copy the link from the Invitations table and send it to them (the app does not send emails itself).`
+        : `Invitation created for ${inviteEmail}.`);
+      if (created?.invite_token) void copyInviteLink(created.invite_token, false);
       setShowInviteForm(false);
       setInviteEmail(''); setInviteRole('VIEWER');
       if (result.data) setInvitations(prev => [result.data as UserInvitation, ...prev]);
     });
+  }
+
+  async function copyInviteLink(token: string, announce = true) {
+    const link = `${window.location.origin}/invite/${token}`;
+    try { await navigator.clipboard.writeText(link); if (announce) setMsg('Invitation link copied. Send it to the invited person.'); }
+    catch { setMsg(`Copy this link and send it to the invited person: ${link}`); }
+  }
+
+  function mailtoFor(inv: UserInvitation) {
+    const link = `${window.location.origin}/invite/${inv.invite_token}`;
+    const body = `You have been invited to FertiLedger ERP as ${inv.role_name}.\n\nOpen this link to create your account (valid until ${inv.expires_at?.slice(0, 10)}):\n${link}`;
+    return `mailto:${encodeURIComponent(inv.email)}?subject=${encodeURIComponent('Your FertiLedger ERP invitation')}&body=${encodeURIComponent(body)}`;
   }
 
   function handleRevoke(id: string) {
@@ -127,7 +143,7 @@ export default function UsersAdminClient({ initialUsers, initialInvitations }: P
             </div>
             <button type="submit" disabled={isPending}
               className="px-5 py-2 bg-green-700 text-white text-sm font-medium rounded-lg hover:bg-green-800 disabled:opacity-50">
-              {isPending ? 'Sending...' : 'Send Invite'}
+              {isPending ? 'Creating...' : 'Create invitation'}
             </button>
             <button type="button" onClick={() => setShowInviteForm(false)}
               className="px-4 py-2 bg-slate-100 text-slate-700 text-sm rounded-lg hover:bg-slate-200">
@@ -230,6 +246,12 @@ export default function UsersAdminClient({ initialUsers, initialInvitations }: P
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500">{inv.expires_at?.slice(0, 10)}</td>
                     <td className="px-4 py-3">
+                      {inv.status === 'PENDING' && inv.invite_token && (
+                        <span className="mr-3 inline-flex gap-3">
+                          <button onClick={() => copyInviteLink(inv.invite_token!)} className="text-xs text-emerald-700 hover:text-emerald-900 underline">Copy link</button>
+                          <a href={mailtoFor(inv)} className="text-xs text-emerald-700 hover:text-emerald-900 underline">Email it</a>
+                        </span>
+                      )}
                       {inv.status === 'PENDING' && (
                         <button onClick={() => handleRevoke(inv.id)} disabled={isPending}
                           className="text-xs text-red-500 hover:text-red-700 underline disabled:opacity-50">

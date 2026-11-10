@@ -3,7 +3,7 @@
 import { useFormState, useFormStatus } from "react-dom";
 import { signInAction, type AuthActionState } from "@/actions/auth";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const initialState: AuthActionState = {};
@@ -40,6 +40,8 @@ function SubmitButton() {
 export default function LoginPage() {
   const [state, formAction] = useFormState(signInAction, initialState);
   const [showPassword, setShowPassword] = useState(false);
+  const [redirectTo, setRedirectTo] = useState("");
+  useEffect(() => { setRedirectTo(new URLSearchParams(window.location.search).get("redirectTo") ?? ""); }, []);
 
   return (
     <div className="w-full max-w-md animate-fade-in">
@@ -66,6 +68,7 @@ export default function LoginPage() {
         </div>
 
         <form action={formAction} className="space-y-5" noValidate>
+        <input type="hidden" name="redirectTo" value={redirectTo} />
           {/* Global error */}
           {state.error && (
             <div

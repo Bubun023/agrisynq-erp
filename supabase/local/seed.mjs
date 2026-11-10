@@ -66,7 +66,7 @@ async function createUser(email, fullName, role) {
   const res = await fetch(`${API}/auth/v1/admin/users`, {
     method: "POST",
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password: PASSWORD, email_confirm: true, user_metadata: { tenant_id: tenantId, full_name: fullName } }),
+    body: JSON.stringify({ email, password: PASSWORD, email_confirm: true, app_metadata: { tenant_id: tenantId }, user_metadata: { full_name: fullName } }),
   });
   if (!res.ok) throw new Error(`creating ${email} failed: ${res.status} ${await res.text()}`);
   const u = await res.json();
