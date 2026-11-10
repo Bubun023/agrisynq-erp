@@ -40,6 +40,11 @@ SELECT t_eq('user_metadata cannot choose a tenant: no profile created', (SELECT 
 INSERT INTO auth.users(id, email, raw_user_meta_data, raw_app_meta_data) VALUES (:UA, 'admin@inv.test', '{"full_name":"Inv Admin"}', jsonb_build_object('tenant_id', '00000000-0000-0000-0000-00000000f201'));
 SELECT t_eq('app_metadata provisions a profile', (SELECT COUNT(*) FROM user_profiles WHERE id = :UA AND tenant_id = :T), 1);
 
+-- GoTrue's admin API writes app_metadata in a second step (UPDATE), which must also provision
+INSERT INTO auth.users(id, email) VALUES ('00000000-0000-0000-0000-00000000f209', 'two.step@inv.test');
+UPDATE auth.users SET raw_app_meta_data = jsonb_build_object('tenant_id', '00000000-0000-0000-0000-00000000f201') WHERE id = '00000000-0000-0000-0000-00000000f209';
+SELECT t_eq('app_metadata set in a second step also provisions', (SELECT COUNT(*) FROM user_profiles WHERE id = '00000000-0000-0000-0000-00000000f209' AND tenant_id = :T), 1);
+
 -- even a profile that somehow exists reads nothing until the user holds a role
 INSERT INTO user_profiles(id, tenant_id, full_name) VALUES (:UX, :T, 'Roleless');
 SET ROLE authenticated;

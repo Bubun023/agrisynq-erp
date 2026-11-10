@@ -102,3 +102,12 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION public.invitation_preview(text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.invitation_preview(text) TO service_role;
+
+-- GoTrue's admin API creates the user row first and writes app_metadata in a second step, so the profile must also be
+-- created when raw_app_meta_data is set/changed (still only ever by the server - never by the signing-up person).
+DROP TRIGGER IF EXISTS on_auth_user_app_metadata ON auth.users;
+CREATE TRIGGER on_auth_user_app_metadata
+  AFTER UPDATE OF raw_app_meta_data ON auth.users
+  FOR EACH ROW
+  WHEN (NEW.raw_app_meta_data ->> 'tenant_id' IS NOT NULL)
+  EXECUTE FUNCTION public.handle_new_user();
